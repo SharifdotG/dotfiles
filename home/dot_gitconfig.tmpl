@@ -1,0 +1,24 @@
+[user]
+	name = {{ .name }}
+	email = {{ .email }}
+
+[init]
+	defaultBranch = main
+[pull]
+	rebase = true
+[core]
+	editor = code-insiders --wait
+	# Large monorepos: these three make status/diff noticeably faster.
+	fsmonitor = true
+	untrackedCache = true
+[feature]
+	manyFiles = true
+
+[filter "lfs"]
+	clean = git-lfs clean -- %f
+	smudge = git-lfs smudge -- %f
+	process = git-lfs filter-process
+	required = true
+
+[credential "https://internal-git.siderian.cloud"]
+	provider = generic

@@ -1,0 +1,25 @@
+# Shell, CLI and system essentials. Installed on every machine.
+# Columns: logical id, then the package name per distro.
+#   "-"    = not available from that distro's repos (bootstrap handles it specially)
+#   "skip" = deliberately not installed there
+#id	fedora	arch	nix	notes
+git	git	git	git
+git-lfs	git-lfs	git-lfs	git-lfs
+gh	gh	github-cli	gh
+zsh	zsh	zsh	zsh
+bat	bat	bat	bat
+eza	eza	eza	eza
+fd	fd-find	fd	fd	binary is `fd` on BOTH; there is no `fdfind` on Fedora
+ripgrep	ripgrep	ripgrep	ripgrep
+fzf	fzf	fzf	fzf
+jq	jq	jq	jq
+btop	btop	btop	btop
+htop	htop	htop	htop
+ncdu	ncdu	ncdu	ncdu
+tldr	tldr	tealdeer	tealdeer
+micro	micro	micro	micro
+fastfetch	fastfetch	fastfetch	fastfetch
+unrar	unrar	unrar	unrar
+p7zip	p7zip	p7zip	p7zip
+chezmoi	chezmoi	chezmoi	chezmoi	bootstrap falls back to the upstream installer
+starship	-	starship	starship	Fedora: upstream installer -> /usr/local/bin

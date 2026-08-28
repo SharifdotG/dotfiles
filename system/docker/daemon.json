@@ -1,0 +1,11 @@
+{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "10m", "max-file": "3" },
+  "storage-driver": "overlay2",
+  "builder": {
+    "gc": { "enabled": true, "defaultKeepStorage": "10GB" }
+  },
+  "default-ulimits": {
+    "nofile": { "Name": "nofile", "Soft": 65536, "Hard": 65536 }
+  }
+}

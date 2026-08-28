@@ -1,0 +1,12 @@
+# bat configuration
+# Note: `alias cat='bat --paging=never'` in .zshrc still works; --paging here
+# makes plain `bat` behave the same way.
+--paging=never
+--style=numbers,changes,header
+
+# Theme: `auto` asks the terminal for its background via OSC 11 (bat >= 0.25)
+# and picks a light or dark theme accordingly. Catppuccin themes are part of
+# the deferred theming work; until then these are bat's built-ins.
+--theme=auto
+--theme-light="Monokai Extended Light"
+--theme-dark="Monokai Extended"

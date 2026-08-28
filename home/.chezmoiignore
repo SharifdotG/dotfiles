@@ -1,0 +1,33 @@
+# Paths chezmoi must NOT write on this machine.
+
+# ── GTK is owned by KDE, do not manage it ────────────────────────────────────
+# kde-gtk-config's kded module (gtkconfig.so) regenerates these from the live
+# Plasma colour scheme on EVERY scheme change — verified: gtk-4.0/gtk.css,
+# gtk-4.0/colors.css, gtk-3.0/colors.css and .gtkrc-2.0 were all rewritten
+# within milliseconds of each other at login. A chezmoi-managed copy would be
+# silently clobbered and would look like a theming bug.
+# `gtk-theme-name=Breeze` is CORRECT on Plasma: Breeze is the widget style and
+# KDE recolours it. Do not "fix" it.
+.config/gtk-3.0
+.config/gtk-4.0
+.gtkrc-2.0
+.gtkrc-2.0.mine
+
+# ── Runtime / machine-local state, never source-controlled ───────────────────
+.config/chezmoi
+.local/state
+
+# ── Secrets: generated per machine by scripts/secrets-setup.sh, never stored ──
+.ssh
+.config/gh
+.npmrc
+.nuget
+.docker/config.json
+
+# ── Desktop-conditional ──────────────────────────────────────────────────────
+{{ if ne .desktop "hyprland" }}
+.config/hypr
+{{ end }}
+{{ if ne .desktop "niri" }}
+.config/niri
+{{ end }}

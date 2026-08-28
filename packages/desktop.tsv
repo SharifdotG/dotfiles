@@ -1,0 +1,9 @@
+# Desktop / GUI. Plasma-oriented; this machine stays on Fedora KDE.
+#id	fedora	arch	nix	notes
+firefox	firefox	firefox	firefox	use the RPM, not the Flatpak: VA-API against system ffmpeg
+ghostty	ghostty	ghostty	ghostty
+obs-studio	obs-studio	obs-studio	obs-studio
+telegram	telegram-desktop	telegram-desktop	telegram-desktop
+libreoffice	libreoffice	libreoffice-fresh	libreoffice
+intel-media-driver	intel-media-driver	intel-media-driver	skip	VA-API for UHD 620
+libva-utils	libva-utils	libva-utils	skip	provides `vainfo`

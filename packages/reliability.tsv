@@ -1,0 +1,5 @@
+# Memory pressure + rollback. This is the load-bearing set: see docs/SETUP-GUIDE.md Phase 4.
+#id	fedora	arch	nix	notes
+earlyoom	earlyoom	earlyoom	skip	hard backstop below systemd-oomd
+zram-generator	zram-generator-defaults	zram-generator	skip
+snapper	snapper	snapper	skip	NOT YET INSTALLED - no rollback safety net today
