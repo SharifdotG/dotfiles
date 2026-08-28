@@ -1,30 +1,44 @@
-# Upstreams vendored at `chezmoi apply` time rather than committed.
-# refreshPeriod keeps them from being re-fetched on every apply.
+# Upstreams fetched at `chezmoi apply` time rather than committed into this repo.
+#
+# type = "git-repo", NOT "archive" with exact = true.
+# oh-my-zsh and its plugins are installed as git checkouts. An "archive" external
+# with `exact = true` means "delete anything not in the tarball", which would remove
+# ~/.oh-my-zsh/.git and each plugin's .git directory -- destroying the checkouts and
+# omz's own update mechanism. `git-repo` matches how they are actually installed and
+# updates them with a fast-forward pull.
 
 [".oh-my-zsh"]
-    type = "archive"
-    url = "https://github.com/ohmyzsh/ohmyzsh/archive/master.tar.gz"
-    exact = true
-    stripComponents = 1
+    type = "git-repo"
+    url = "https://github.com/ohmyzsh/ohmyzsh.git"
     refreshPeriod = "168h"
+[".oh-my-zsh".clone]
+    args = ["--depth=1"]
+[".oh-my-zsh".pull]
+    args = ["--ff-only"]
 
 [".oh-my-zsh/custom/plugins/zsh-autosuggestions"]
-    type = "archive"
-    url = "https://github.com/zsh-users/zsh-autosuggestions/archive/master.tar.gz"
-    exact = true
-    stripComponents = 1
+    type = "git-repo"
+    url = "https://github.com/zsh-users/zsh-autosuggestions.git"
     refreshPeriod = "168h"
+[".oh-my-zsh/custom/plugins/zsh-autosuggestions".clone]
+    args = ["--depth=1"]
+[".oh-my-zsh/custom/plugins/zsh-autosuggestions".pull]
+    args = ["--ff-only"]
 
 [".oh-my-zsh/custom/plugins/zsh-completions"]
-    type = "archive"
-    url = "https://github.com/zsh-users/zsh-completions/archive/master.tar.gz"
-    exact = true
-    stripComponents = 1
+    type = "git-repo"
+    url = "https://github.com/zsh-users/zsh-completions.git"
     refreshPeriod = "168h"
+[".oh-my-zsh/custom/plugins/zsh-completions".clone]
+    args = ["--depth=1"]
+[".oh-my-zsh/custom/plugins/zsh-completions".pull]
+    args = ["--ff-only"]
 
 [".oh-my-zsh/custom/plugins/zsh-syntax-highlighting"]
-    type = "archive"
-    url = "https://github.com/zsh-users/zsh-syntax-highlighting/archive/master.tar.gz"
-    exact = true
-    stripComponents = 1
+    type = "git-repo"
+    url = "https://github.com/zsh-users/zsh-syntax-highlighting.git"
     refreshPeriod = "168h"
+[".oh-my-zsh/custom/plugins/zsh-syntax-highlighting".clone]
+    args = ["--depth=1"]
+[".oh-my-zsh/custom/plugins/zsh-syntax-highlighting".pull]
+    args = ["--ff-only"]
