@@ -43,7 +43,11 @@ chk "fd works (alias removed)"   ok       "$(zsh -ic 'fd --version' 2>/dev/null 
 chk "starship palette active"    yes      "$(grep -q '^palette' ~/.config/starship.toml 2>/dev/null && echo yes || echo no)"
 chk "ZSH_THEME empty"            yes      "$(grep -q '^ZSH_THEME=""' ~/.zshrc 2>/dev/null && echo yes || echo no)"
 chk "bat config exists"          yes      "$([ -f ~/.config/bat/config ] && echo yes || echo no)"
+# Report load and CPU clock alongside: on this laptop startup time swings 5x
+# between an idle machine (~0.09s) and load>6 with the CPU parked at 800 MHz
+# (~0.45s). Without this context the number looks like a regression when it isn't.
 note "zsh startup" "$( { TIMEFORMAT=%R; time zsh -ic exit; } 2>&1 | tail -1 )s"
+note "  load avg / CPU MHz" "$(cut -d' ' -f1-3 /proc/loadavg) / $(awk '/cpu MHz/{s+=$4;n++} END{printf "%.0f", s/n}' /proc/cpuinfo)"
 
 step "VS Code"
 S="$HOME/.config/Code - Insiders/User/settings.json"
