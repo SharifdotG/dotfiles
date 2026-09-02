@@ -1,0 +1,35 @@
+[Desktop Entry]
+Version=1.0
+Name=Firefox
+GenericName=Web Browser
+Comment=Browse the Web (memory-capped - see ~/.local/bin/firefox-capped)
+# NB: shadows /usr/share/applications/firefox.desktop by desktop-file ID, so
+# EVERY launch path goes through the wrapper - the Noctalia launcher, xdg-open,
+# a portal handing off a link, and the Mod+B bind. Pointing only the keybind at
+# the wrapper would leave the other three uncapped.
+#
+# NB: the Exec path is absolute. ~/.local/bin is on the SHELL's PATH (set in
+# .zshrc), but a desktop entry launched by the shell's launcher or by a portal
+# does not inherit that, so a bare `firefox-capped` here would silently fail to
+# start anything.
+#
+# NB: the ID differs by distro. Fedora's RPM shipped this as
+# org.mozilla.firefox.desktop; Arch ships firefox.desktop. This file is named
+# for the Arch ID.
+Exec={{ .chezmoi.homeDir }}/.local/bin/firefox-capped %u
+Icon=firefox
+Terminal=false
+Type=Application
+MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+StartupNotify=true
+StartupWMClass=firefox
+Categories=Network;WebBrowser;
+Actions=new-window;new-private-window;
+
+[Desktop Action new-window]
+Name=New Window
+Exec={{ .chezmoi.homeDir }}/.local/bin/firefox-capped --new-window %u
+
+[Desktop Action new-private-window]
+Name=New Private Window
+Exec={{ .chezmoi.homeDir }}/.local/bin/firefox-capped --private-window %u

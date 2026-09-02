@@ -1,0 +1,29 @@
+// Display geometry for the ThinkPad T490s. This is the ONE file that changes
+// when the hardware does; everything else in the niri config is portable.
+//
+// NB: the two odd numbers below are arithmetic, not taste. Do not "tidy" them.
+//
+//   eDP-1 is a 1920x1080 panel run at scale 1.25, so its LOGICAL size is
+//   1920 / 1.25 = 1536 x 864.
+//
+//   Positions are in logical pixels, so HDMI-A-2 starts at x=1536 - immediately
+//   to the right of the internal panel's logical width, not its physical one.
+//   Using 1920 here would leave a 384px dead zone the pointer gets stuck in.
+//
+//   eDP-1 gets y=216 so the two screens are bottom-aligned: the external is
+//   1080 logical tall, the internal 864, and 1080 - 864 = 216.
+
+output "eDP-1" {
+    mode "1920x1080@60.000"
+    scale 1.25
+    position x=0 y=216
+    // The panel is 60Hz and this is a laptop on battery; VRR buys nothing.
+    variable-refresh-rate false
+}
+
+output "HDMI-A-2" {
+    mode "1920x1080@60.000"
+    scale 1.0
+    position x=1536 y=0
+    focus-at-startup
+}

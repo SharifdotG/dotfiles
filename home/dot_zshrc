@@ -132,7 +132,12 @@ alias memhogs='ps aux --sort=-%mem | head -12'
 alias cgtop='systemd-cgtop -m'
 alias dps='docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"'
 alias dstats='docker stats --no-stream'
-alias dprune='docker system prune -af --volumes && docker builder prune -af'
+# NB: NO --volumes, and NO -a. `docker system prune` removes stopped containers
+# FIRST, which orphans their named volumes; --volumes then deletes those orphans
+# in the same command, and -f means there is no prompt. On this machine that is
+# the Postgres, MinIO and Keycloak data. `-a` separately removes every image not
+# backed by a RUNNING container, i.e. most of what you use weekly.
+alias dprune='docker system prune -f && docker builder prune -f'
 alias lzd='lazydocker'
 alias nxr='nx reset'
 

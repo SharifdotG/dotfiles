@@ -1,13 +1,16 @@
 # Development toolchain.
-#id	fedora	arch	nix	notes
-python3	python3	python	python3
-python3-pip	python3-pip	python-pip	skip
-nodejs	nodejs22	nodejs	nodejs_22	Fedora 44 uses versioned streams (nodejs22)
-npm	nodejs22-npm	npm	skip
-dotnet-sdk-9	dotnet-sdk-9.0	-	skip	Arch ships a source-built SDK; verify before relying on it
-dotnet-sdk-10	dotnet-sdk-10.0	dotnet-sdk	skip
-docker	docker-ce	docker	skip	Fedora: needs the docker-ce repo, see os/fedora/prep.sh
-docker-cli	docker-ce-cli	docker	skip
-containerd	containerd.io	containerd	skip
-docker-buildx	docker-buildx-plugin	docker-buildx	skip
-docker-compose	docker-compose-plugin	docker-compose	skip
+#id	arch	aur	nix	notes
+python3	python	skip	python3
+python3-pip	python-pip	skip	skip
+nodejs	nodejs	skip	nodejs_22
+npm	npm	skip	skip
+dotnet-sdk-9	dotnet-sdk-9.0	skip	skip	in extra; the old "-" and "source-built SDK" note were stale
+dotnet-sdk-10	dotnet-sdk-10.0	skip	skip	pinned, not the rolling dotnet-sdk meta
+docker	docker	skip	skip
+docker-cli	docker	skip	skip
+containerd	containerd	skip	skip
+docker-buildx	docker-buildx	skip	skip
+docker-compose	docker-compose	skip	skip
+lazydocker	lazydocker	skip	skip	aliased as `lzd` in dot_zshrc; in extra, not the AUR
+postgresql	postgresql	skip	skip	host client; the guide says run the server in Docker
+code-insiders	skip	visual-studio-code-insiders-bin	skip	AUR-only, and it is the primary editor

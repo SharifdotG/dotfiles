@@ -1,6 +1,18 @@
 {{- $name  := promptStringOnce . "name"  "Full name for git commits" -}}
 {{- $email := promptStringOnce . "email" "Email for git commits" -}}
-{{- $desktop := promptStringOnce . "desktop" "Desktop session (plasma/hyprland/niri/none)" "plasma" -}}
+{{- /*
+     NB: answer "niri" here. .chezmoiignore gates .config/niri, .config/noctalia
+     and .config/xdg-desktop-portal on this value, so any other answer means the
+     entire compositor and shell config is silently never written - no error,
+     just a missing desktop.
+
+     NB: promptStringOnce only asks when the key is ABSENT from
+     ~/.config/chezmoi/chezmoi.toml. Carrying an old chezmoi.toml across from
+     the Plasma machine would keep desktop = "plasma" forever without ever
+     prompting. Force it with:
+         chezmoi init --promptString desktop=niri
+*/ -}}
+{{- $desktop := promptStringOnce . "desktop" "Desktop session (niri/hyprland/plasma/none)" "niri" -}}
 
 [data]
     name    = {{ $name | quote }}

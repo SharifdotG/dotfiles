@@ -1,9 +1,57 @@
-# Desktop / GUI. Plasma-oriented; this machine stays on Fedora KDE.
-#id	fedora	arch	nix	notes
-firefox	firefox	firefox	firefox	use the RPM, not the Flatpak: VA-API against system ffmpeg
-ghostty	ghostty	ghostty	ghostty
-obs-studio	obs-studio	obs-studio	obs-studio
-telegram	telegram-desktop	telegram-desktop	telegram-desktop
-libreoffice	libreoffice	libreoffice-fresh	libreoffice
-intel-media-driver	intel-media-driver	intel-media-driver	skip	VA-API for UHD 620
-libva-utils	libva-utils	libva-utils	skip	provides `vainfo`
+# Desktop / GUI: niri (scrollable-tiling Wayland compositor) + Noctalia v5 shell.
+#
+# NB: Noctalia v5 does NOT use Quickshell or Qt. It is a single native binary
+# linked against cairo/pango/harfbuzz/glib. Do not add `quickshell` here.
+#id	arch	aur	nix	notes
+# -- session --------------------------------------------------------------
+niri	niri	skip	skip	ships its own niri.service, niri.desktop and niri-portals.conf
+xwayland-satellite	xwayland-satellite	skip	skip	niri auto-spawns it and sets DISPLAY when present
+noctalia	noctalia	skip	skip	bar, launcher, notifications, lock, calculator (links libqalculate)
+uwsm	uwsm	skip	skip	launches apps as app-niri-<id>@<hex>.service so the Firefox MemoryHigh cap works
+greetd	greetd	skip	skip
+greetd-tuigreet	greetd-tuigreet	skip	skip
+xdg-desktop-portal	xdg-desktop-portal	skip	skip
+xdg-desktop-portal-gnome	xdg-desktop-portal-gnome	skip	skip	serves org.freedesktop.appearance + ScreenCast
+xdg-desktop-portal-gtk	xdg-desktop-portal-gtk	skip	skip	FileChooser; niri-portals.conf prefers gnome then gtk
+xdg-user-dirs	xdg-user-dirs	skip	skip
+gnome-keyring	gnome-keyring	skip	skip	Secret Service; replaces kwallet, which goes with Plasma
+polkit-gnome	polkit-gnome	skip	skip	without an agent, every GUI password prompt silently does nothing
+# -- theming --------------------------------------------------------------
+adw-gtk-theme	adw-gtk-theme	skip	skip	Noctalia's GTK template syncs adw-gtk3/adw-gtk3-dark
+papirus-icon-theme	papirus-icon-theme	skip	skip
+adwaita-cursors	adwaita-cursors	skip	skip
+qt6ct	qt6ct	skip	skip	only OBS and Telegram are left on Qt after the KDE apps go
+# -- fonts ----------------------------------------------------------------
+maplemono-nf	skip	ttf-maplemono-nf-unhinted	skip	AUR-only, and every terminal/editor config in this repo names it
+inter-font	inter-font	skip	skip	Noctalia UI font
+noto-fonts	noto-fonts	skip	skip
+noto-fonts-emoji	noto-fonts-emoji	skip	skip
+noto-fonts-cjk	noto-fonts-cjk	skip	skip
+# -- applications ---------------------------------------------------------
+firefox	firefox	skip	skip	the repo package, not the Flatpak: VA-API against system ffmpeg
+ghostty	ghostty	skip	skip	the terminal; Konsole is gone
+thunar	thunar	skip	skip	GUI file manager (Dolphin replacement)
+thunar-volman	thunar-volman	skip	skip
+thunar-archive-plugin	thunar-archive-plugin	skip	skip	right-click extract, using the file-roller backend
+tumbler	tumbler	skip	skip	thumbnails for Thunar
+ffmpegthumbnailer	ffmpegthumbnailer	skip	skip
+gvfs	gvfs	skip	skip
+gvfs-mtp	gvfs-mtp	skip	skip
+file-roller	file-roller	skip	skip	Ark replacement; p7zip/unrar in core.tsv are the backends
+zathura	zathura	skip	skip	Okular replacement. NB: no annotation or form filling - swap to `papers` if you need either
+zathura-pdf-mupdf	zathura-pdf-mupdf	skip	skip
+imv	imv	skip	skip	Gwenview replacement
+mpv	mpv	skip	skip
+obs-studio	obs-studio	skip	skip
+telegram-desktop	telegram-desktop	skip	skip
+vesktop	skip	vesktop-bin	skip	the -bin: building vesktop from source is a 30-60min Electron build on 4C/8T
+libreoffice	libreoffice-fresh	skip	skip
+# -- session plumbing -----------------------------------------------------
+brightnessctl	brightnessctl	skip	skip
+playerctl	playerctl	skip	skip
+wl-clipboard	wl-clipboard	skip	skip	Wayland has no clipboard owner after an app exits
+grim	grim	skip	skip	niri has built-in screenshot binds; grim/slurp are for scripted captures
+slurp	slurp	skip	skip
+bluez-utils	bluez-utils	skip	skip
+intel-media-driver	intel-media-driver	skip	skip	VA-API for UHD 620; LIBVA_DRIVER_NAME=iHD is set in environment.d
+libva-utils	libva-utils	skip	skip	provides `vainfo`

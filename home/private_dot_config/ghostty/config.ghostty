@@ -1,4 +1,50 @@
+# Ghostty is now THE terminal, not the lighter of two.
+#
+# NB: everything below the font block came from
+# desktops/plasma/konsole/SharifdotG.profile, which was deleted with the rest of
+# the Plasma layer. Konsole was what actually ran day to day on the old machine
+# even though Ghostty was the one this repo managed - and the reason was almost
+# certainly that this file set a font and nothing else, so Ghostty came up in its
+# stock palette while the shell inside it hard-coded Catppuccin Latte's
+# light-background hexes. Theming it is not polish; it is what makes Ghostty
+# usable now that there is no Konsole to fall back to.
+
+# ── font ────────────────────────────────────────────────────────────────────
+# The stylistic sets match editor.fontLigatures in the VS Code settings exactly.
 font-family = Maple Mono NF
 font-feature = calt, zero, cv03, cv05, cv09, cv10, cv61, cv38, cv42, cv43, ss03, ss07, ss08, ss09, ss10, ss11
 font-size = 10
 
+# ── colour ──────────────────────────────────────────────────────────────────
+# Ghostty ships Catppuccin, so this needs no external file and no generator.
+# NB: Noctalia also has a ghostty template, deliberately NOT enabled - see the
+# note in ~/.config/noctalia/config.toml. Two owners for terminal colour means
+# whichever wrote last wins, which is a bad way to find out your theme changed.
+theme = catppuccin-latte
+
+# ── behaviour, ported from the Konsole profile ──────────────────────────────
+command = /bin/zsh
+window-width = 125
+window-height = 30
+cursor-style = bar
+cursor-style-blink = true
+mouse-hide-while-typing = true
+confirm-close-surface = false
+# Pairs with niri's prefer-no-csd: let the compositor draw the frame.
+window-decoration = server
+
+# NB: on Ghostty 1.3.x `scrollback-limit` is in BYTES, not lines - the name is
+# misleading. Two things worth knowing, both checked against the real binary:
+#
+#   1. Ghostty's DEFAULT is already 10000000 (10 MB), so scrollback here was
+#      never unbounded the way Konsole's could be. Writing 10000000 would be a
+#      silent no-op - `ghostty +show-config` omits it precisely because it
+#      matches the default.
+#   2. Konsole's HistorySize=10000 was 10k LINES, which at typical log-line
+#      widths is closer to 1-2 MB. So 2 MB is the honest port of the old
+#      setting, and it is a tightening of Ghostty's default rather than a fix
+#      for something broken.
+#
+# Ghostty 1.4 splits this into scrollback-limit-bytes / scrollback-limit-lines;
+# switch to `scrollback-limit-lines = 10000` then for an exact match.
+scrollback-limit = 2000000

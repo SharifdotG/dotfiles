@@ -1,9 +1,0 @@
-# These default settings were approved by the Fedora Workstation SIG:
-# https://pagure.io/fedora-workstation/issue/119
-
-EARLYOOM_ARGS="-r 3600 -m 4 -s 20 \
-  --avoid '^(systemd|systemd-.*|sshd|kwin_wayland|plasmashell|Xwayland|kded6|krunner|dbus-.*|sddm.*)$' \
-  --prefer '^(node|Web Content|Isolated Web Co|firefox|code-insiders|dotnet|sqlservr|java)$' \
-  -n"
-
-# More documentation at `man earlyoom` or `earlyoom -h`.

@@ -1,0 +1,121 @@
+// Keybindings. Split out because this is the longest section by far and it is
+// the part you actually edit.
+//
+// Mod is Super. Where a Plasma shortcut mapped cleanly it was kept, because
+// muscle memory is the expensive thing to relearn: Mod+L locks and
+// Ctrl+Alt+Delete opens the session panel, and the media keys keep
+// their Plasma behaviour including Shift for 1% steps.
+
+binds {
+    // ── help ────────────────────────────────────────────────────────────────
+    Mod+Shift+Slash { show-hotkey-overlay; }
+
+    // ── launching ───────────────────────────────────────────────────────────
+    Mod+Return  { spawn "ghostty"; }
+    Mod+E       { spawn "thunar"; }
+    Mod+B       { spawn "firefox"; }
+    Mod+D       { spawn "noctalia" "msg" "panel-toggle" "launcher"; }
+    Mod+N       { spawn "noctalia" "msg" "panel-toggle" "control-center"; }
+    Mod+L       { spawn "noctalia" "msg" "lock"; }
+    Ctrl+Alt+Delete { spawn "noctalia" "msg" "panel-toggle" "session"; }
+    Mod+Shift+V { spawn "noctalia" "msg" "panel-toggle" "clipboard"; }
+
+    // ── windows ─────────────────────────────────────────────────────────────
+    Mod+Q       { close-window; }
+    Mod+F       { maximize-column; }
+    Mod+Shift+F { fullscreen-window; }
+    Mod+Ctrl+F  { expand-column-to-available-width; }
+    Mod+C       { center-column; }
+    Mod+V       { toggle-window-floating; }
+    Mod+W       { toggle-column-tabbed-display; }
+    Mod+R       { switch-preset-column-width; }
+    Mod+Shift+R { switch-preset-window-height; }
+
+    // ── focus ───────────────────────────────────────────────────────────────
+    // Columns are horizontal, windows vertical.
+    //
+    // NB: a real conflict, resolved deliberately. Vim-style would put
+    // focus-column-right on Mod+L, but Mod+L has been "lock the screen" on this
+    // machine for years and that reflex is not worth breaking for a tiling
+    // convention. So the home-row pair is H / Semicolon (adjacent on the row),
+    // and the arrows do the same job. If you would rather have hjkl, move lock
+    // to Mod+Escape above and swap Semicolon for L here.
+    Mod+H       { focus-column-left; }
+    Mod+Semicolon { focus-column-right; }
+    Mod+Left    { focus-column-left; }
+    Mod+Right   { focus-column-right; }
+    Mod+J       { focus-window-down; }
+    Mod+K       { focus-window-up; }
+    Mod+Down    { focus-window-down; }
+    Mod+Up      { focus-window-up; }
+    Mod+Home    { focus-column-first; }
+    Mod+End     { focus-column-last; }
+
+    // ── moving ──────────────────────────────────────────────────────────────
+    Mod+Ctrl+H         { move-column-left; }
+    Mod+Ctrl+Semicolon { move-column-right; }
+    Mod+Ctrl+Left  { move-column-left; }
+    Mod+Ctrl+Right { move-column-right; }
+    Mod+Ctrl+J     { move-window-down; }
+    Mod+Ctrl+K     { move-window-up; }
+
+    // ── column composition ──────────────────────────────────────────────────
+    // The scrollable-tiling idea that has no Plasma equivalent: pull the next
+    // window into this column, or push one out of it.
+    Mod+Comma       { consume-window-into-column; }
+    Mod+Period      { expel-window-from-column; }
+    Mod+BracketLeft  { consume-or-expel-window-left; }
+    Mod+BracketRight { consume-or-expel-window-right; }
+
+    // ── monitors ────────────────────────────────────────────────────────────
+    // The payoff for a dual-head setup; there was no Plasma equivalent worth
+    // keeping, so these are new muscle memory.
+    Mod+Shift+H         { focus-monitor-left; }
+    Mod+Shift+Semicolon { focus-monitor-right; }
+    Mod+Shift+Ctrl+H         { move-column-to-monitor-left; }
+    Mod+Shift+Ctrl+Semicolon { move-column-to-monitor-right; }
+
+    // ── workspaces ──────────────────────────────────────────────────────────
+    Mod+Tab       { toggle-overview; }
+    Mod+1 { focus-workspace 1; }
+    Mod+2 { focus-workspace 2; }
+    Mod+3 { focus-workspace 3; }
+    Mod+4 { focus-workspace 4; }
+    Mod+5 { focus-workspace 5; }
+    Mod+Ctrl+1 { move-column-to-workspace 1; }
+    Mod+Ctrl+2 { move-column-to-workspace 2; }
+    Mod+Ctrl+3 { move-column-to-workspace 3; }
+    Mod+Ctrl+4 { move-column-to-workspace 4; }
+    Mod+Ctrl+5 { move-column-to-workspace 5; }
+    Mod+Page_Down { focus-workspace-down; }
+    Mod+Page_Up   { focus-workspace-up; }
+
+    // ── screenshots ─────────────────────────────────────────────────────────
+    // niri has these built in - no grim/slurp needed for interactive captures,
+    // which is why Spectacle needed no replacement package.
+    Print           { screenshot; }
+    Ctrl+Print      { screenshot-screen; }
+    Alt+Print       { screenshot-window; }
+    Mod+Shift+S     { screenshot; }
+
+    // ── media and brightness ────────────────────────────────────────────────
+    // Routed through Noctalia rather than wpctl/brightnessctl directly so the
+    // on-screen display appears; a silent volume change is worse than no bind.
+    // allow-when-locked so they still work on the lock screen, as they did on
+    // Plasma.
+    XF86AudioRaiseVolume  allow-when-locked=true { spawn "noctalia" "msg" "volume-up"; }
+    XF86AudioLowerVolume  allow-when-locked=true { spawn "noctalia" "msg" "volume-down"; }
+    XF86AudioMute         allow-when-locked=true { spawn "noctalia" "msg" "volume-mute"; }
+    XF86AudioMicMute      allow-when-locked=true { spawn "noctalia" "msg" "mic-mute"; }
+    Shift+XF86AudioRaiseVolume allow-when-locked=true { spawn "wpctl" "set-volume" "@DEFAULT_AUDIO_SINK@" "1%+"; }
+    Shift+XF86AudioLowerVolume allow-when-locked=true { spawn "wpctl" "set-volume" "@DEFAULT_AUDIO_SINK@" "1%-"; }
+    XF86MonBrightnessUp   allow-when-locked=true { spawn "noctalia" "msg" "brightness-up"; }
+    XF86MonBrightnessDown allow-when-locked=true { spawn "noctalia" "msg" "brightness-down"; }
+    XF86AudioPlay  allow-when-locked=true { spawn "playerctl" "play-pause"; }
+    XF86AudioNext  allow-when-locked=true { spawn "playerctl" "next"; }
+    XF86AudioPrev  allow-when-locked=true { spawn "playerctl" "previous"; }
+
+    // ── session ─────────────────────────────────────────────────────────────
+    Mod+Shift+E { quit; }
+    Mod+Shift+P { power-off-monitors; }
+}

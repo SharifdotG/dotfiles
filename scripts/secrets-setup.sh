@@ -29,7 +29,7 @@ step "Not managed here (by design)"
 cat <<'EOS'
   ~/.npmrc, ~/.nuget/NuGet.Config   registry tokens
   ~/.docker/config.json             registry credentials
-  kwallet                           desktop secrets
+  gnome-keyring                     desktop secrets (Secret Service)
   Firefox profile                   use Firefox Sync
   Bitwarden vault                   sign in normally
 EOS

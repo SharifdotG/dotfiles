@@ -1,5 +1,12 @@
-# Memory pressure + rollback. This is the load-bearing set: see docs/SETUP-GUIDE.md Phase 4.
-#id	fedora	arch	nix	notes
-earlyoom	earlyoom	earlyoom	skip	hard backstop below systemd-oomd
-zram-generator	zram-generator-defaults	zram-generator	skip
-snapper	snapper	snapper	skip	NOT YET INSTALLED - no rollback safety net today
+# Memory pressure, rollback and hardware health. This is the load-bearing set:
+# see docs/SETUP-GUIDE.md Phase 4.
+#id	arch	aur	nix	notes
+earlyoom	earlyoom	skip	skip	hard backstop below systemd-oomd; args live in system/systemd/system/earlyoom.service.d/
+zram-generator	zram-generator	skip	skip	Arch has no -defaults split package
+snapper	snapper	skip	skip	the rollback net; never actually installed under Fedora
+snap-pac	snap-pac	skip	skip	pre/post btrfs snapshots around every pacman transaction
+thermald	thermald	skip	skip	Whiskey Lake is exactly its target platform
+smartmontools	smartmontools	skip	skip	smartd.service is enabled by system/apply.sh
+irqbalance	irqbalance	skip	skip
+fwupd	fwupd	skip	skip	LVFS firmware; works fine with Secure Boot disabled
+intel-lpmd	skip	skip	skip	NOT installed: intel_lpmd(8) is for hybrid P-core/E-core CPUs. The i5-8365U is 4 homogeneous cores with no E-cores, so its default config selects a cpuset that does not exist here. Do not "fix" this back in.

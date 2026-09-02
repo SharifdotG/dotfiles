@@ -1,25 +1,31 @@
 # Shell, CLI and system essentials. Installed on every machine.
-# Columns: logical id, then the package name per distro.
-#   "-"    = not available from that distro's repos (bootstrap handles it specially)
-#   "skip" = deliberately not installed there
-#id	fedora	arch	nix	notes
-git	git	git	git
-git-lfs	git-lfs	git-lfs	git-lfs
-gh	gh	github-cli	gh
-zsh	zsh	zsh	zsh
-bat	bat	bat	bat
-eza	eza	eza	eza
-fd	fd-find	fd	fd	binary is `fd` on BOTH; there is no `fdfind` on Fedora
-ripgrep	ripgrep	ripgrep	ripgrep
-fzf	fzf	fzf	fzf
-jq	jq	jq	jq
-btop	btop	btop	btop
-htop	htop	htop	htop
-ncdu	ncdu	ncdu	ncdu
-tldr	tldr	tealdeer	tealdeer
-micro	micro	micro	micro
-fastfetch	fastfetch	fastfetch	fastfetch
-unrar	unrar	unrar	unrar
-p7zip	p7zip	p7zip	p7zip
-chezmoi	chezmoi	chezmoi	chezmoi	bootstrap falls back to the upstream installer
-starship	-	starship	starship	Fedora: upstream installer -> /usr/local/bin
+# Columns: logical id, then the package name per source.
+#   "arch" = pacman, from the CachyOS/Arch repos
+#   "aur"  = built by paru; used only where no repo package exists
+#   "-"    = no package anywhere (bootstrap handles it specially)
+#   "skip" = deliberately not installed from that source
+#id	arch	aur	nix	notes
+git	git	skip	git
+git-lfs	git-lfs	skip	git-lfs
+gh	github-cli	skip	gh
+zsh	zsh	skip	zsh
+bat	bat	skip	bat
+eza	eza	skip	eza
+fd	fd	skip	fd	binary and package are both `fd`; `fdfind` is the Debian name
+ripgrep	ripgrep	skip	ripgrep
+fzf	fzf	skip	fzf
+jq	jq	skip	jq
+btop	btop	skip	btop
+htop	htop	skip	htop
+ncdu	ncdu	skip	ncdu
+tldr	tealdeer	skip	tealdeer
+micro	micro	skip	micro
+fastfetch	fastfetch	skip	fastfetch
+unrar	unrar	skip	unrar
+p7zip	p7zip	skip	p7zip
+yazi	yazi	skip	yazi	TUI file manager; the Dolphin replacement that fits this workflow
+chezmoi	chezmoi	skip	chezmoi
+starship	starship	skip	starship
+base-devel	base-devel	skip	skip	a group, not a package; prerequisite for any AUR build
+pacman-contrib	pacman-contrib	skip	skip	provides paccache, used by scripts/reclaim.sh
+paru	paru	skip	skip	AUR helper; CachyOS preinstalls it, --needed makes this a no-op

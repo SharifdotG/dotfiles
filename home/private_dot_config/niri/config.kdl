@@ -1,0 +1,155 @@
+// niri - scrollable-tiling Wayland compositor.
+// Split across three files; niri has supported `include` since 25.11.
+//
+// Theme is Catppuccin Latte (light), matching starship, zsh-syntax-highlighting,
+// ghostty, btop, micro and VS Code. Palette reference:
+//   base #eff1f5  text #4c4f69  blue #1e66f5  surface1 #bcc0cc  crust #dce0e8
+
+include "outputs.kdl"
+include "binds.kdl"
+
+input {
+    keyboard {
+        xkb {
+            layout "us"
+            model "pc105"
+        }
+        repeat-delay 400
+        repeat-rate 40
+        numlock
+    }
+
+    touchpad {
+        tap
+        natural-scroll
+        // Disable-while-typing: the T490s touchpad sits right under the space bar.
+        dwt
+        click-method "clickfinger"
+        scroll-method "two-finger"
+        accel-profile "adaptive"
+        middle-emulation
+    }
+
+    // NB: the TrackPoint needs its own block. It inherits NOTHING from
+    // touchpad{} - they are separate libinput devices - so without this the
+    // red nub gets stock settings and, in particular, no press-to-scroll.
+    // scroll-button 274 is BTN_MIDDLE: hold the middle button and the nub
+    // scrolls, which is the entire reason a ThinkPad has one.
+    trackpoint {
+        accel-profile "adaptive"
+        scroll-method "on-button-down"
+        scroll-button 274
+        middle-emulation
+    }
+
+    // Across a 3456px-wide mixed-DPI span the pointer is easy to lose.
+    warp-mouse-to-focus
+    focus-follows-mouse max-scroll-amount="0%"
+}
+
+layout {
+    gaps 8
+    center-focused-column "on-overflow"
+
+    preset-column-widths {
+        proportion 0.33333
+        proportion 0.5
+        proportion 0.66667
+    }
+    default-column-width { proportion 0.5; }
+
+    focus-ring {
+        width 2
+        active-color "#1e66f5"
+        inactive-color "#bcc0cc"
+    }
+    border { off; }
+
+    // NB: shadows and blur are off deliberately. This is an Intel UHD 620 with
+    // no discrete GPU, driving 3456x1080 logical pixels across two heads. The
+    // compositor effects budget is better spent on staying at 60fps.
+    shadow { off; }
+
+    struts {
+        left 0
+        right 0
+    }
+}
+
+overview {
+    backdrop-color "#dce0e8"
+}
+
+cursor {
+    xcursor-theme "Adwaita"
+    xcursor-size 24
+    hide-when-typing
+}
+
+// NB: this mirrors ~/.config/environment.d/50-wayland.conf. Both are needed:
+// environment.d is read by the systemd user manager (so it covers anything
+// launched as a unit, including via uwsm), while this block covers processes
+// niri spawns directly. Keep the two in sync.
+environment {
+    QT_QPA_PLATFORMTHEME "qt6ct"
+    QT_WAYLAND_DISABLE_WINDOWDECORATION "1"
+    ELECTRON_OZONE_PLATFORM_HINT "auto"
+    MOZ_ENABLE_WAYLAND "1"
+    LIBVA_DRIVER_NAME "iHD"
+    XCURSOR_THEME "Adwaita"
+    XCURSOR_SIZE "24"
+}
+
+prefer-no-csd
+screenshot-path "~/Pictures/Screenshots/%Y-%m-%d %H-%M-%S.png"
+hotkey-overlay { skip-at-startup; }
+
+// Workspaces pinned to outputs. NB: open-on-output degrades gracefully - when
+// the external is unplugged these fall back to eDP-1 and return on re-plug,
+// which is the right behaviour for a laptop that is docked half the time.
+workspace "term" { open-on-output "eDP-1"; }
+workspace "chat" { open-on-output "eDP-1"; }
+workspace "code" { open-on-output "HDMI-A-2"; }
+workspace "web"  { open-on-output "HDMI-A-2"; }
+
+// ── window rules ────────────────────────────────────────────────────────────
+window-rule {
+    geometry-corner-radius 8
+    clip-to-geometry true
+}
+
+window-rule {
+    match app-id=r#"^firefox$"# title="^Picture-in-Picture$"
+    open-floating true
+}
+
+window-rule {
+    match app-id=r#"^org\.pulseaudio\.pavucontrol$"#
+    match app-id=r#"^xdg-desktop-portal-gtk$"#
+    match app-id=r#"^\.blueman-manager-wrapped$"#
+    open-floating true
+}
+
+window-rule {
+    match app-id=r#"^com\.mitchellh\.ghostty$"#
+    default-column-width { proportion 0.5; }
+}
+
+window-rule {
+    match app-id=r#"^code-insiders$"#
+    open-on-workspace "code"
+    default-column-width { proportion 0.66667; }
+}
+
+// ── startup ─────────────────────────────────────────────────────────────────
+// NB: Noctalia is NOT started here. Its package ships no systemd unit, so this
+// repo provides one at ~/.config/systemd/user/noctalia.service and wires it in
+// with `systemctl --user add-wants niri.service noctalia.service`. A
+// spawn-at-startup child is unsupervised: nothing restarts it when it crashes,
+// and there is no unit to attach ManagedOOMPreference=avoid to - which matters,
+// because losing the shell to the OOM killer means losing the bar, the
+// launcher, the notifications and the lock screen at once.
+//
+// Belt-and-braces for the very first login, before Noctalia's GTK template has
+// ever run. Idempotent, so leaving it in costs nothing.
+spawn-sh-at-startup "gsettings set org.gnome.desktop.interface color-scheme 'prefer-light'"

@@ -1,20 +1,41 @@
 # Paths chezmoi must NOT write on this machine.
 
-# ── GTK is owned by KDE, do not manage it ────────────────────────────────────
-# kde-gtk-config's kded module (gtkconfig.so) regenerates these from the live
-# Plasma colour scheme on EVERY scheme change — verified: gtk-4.0/gtk.css,
-# gtk-4.0/colors.css, gtk-3.0/colors.css and .gtkrc-2.0 were all rewritten
-# within milliseconds of each other at login. A chezmoi-managed copy would be
-# silently clobbered and would look like a theming bug.
-# `gtk-theme-name=Breeze` is CORRECT on Plasma: Breeze is the widget style and
-# KDE recolours it. Do not "fix" it.
-.config/gtk-3.0
-.config/gtk-4.0
+# ── GTK/Qt: manage the settings, never the generated colours ─────────────────
+# This block INVERTED when Plasma went away, so the reasoning is worth keeping.
+#
+# Under KDE, kde-gtk-config's kded module (gtkconfig.so) regenerated the whole
+# GTK config from the live Plasma colour scheme on every scheme change -
+# verified: gtk-4.0/gtk.css, gtk-4.0/colors.css, gtk-3.0/colors.css and
+# .gtkrc-2.0 were all rewritten within milliseconds of each other at login. So
+# a chezmoi-managed copy was silently clobbered and looked like a theming bug,
+# and the whole directory had to be ignored.
+#
+# Under niri there is no kded and nothing regenerates anything, so the old rule
+# would leave GTK apps on unthemed Adwaita forever - the same symptom from the
+# opposite cause. What DOES write colours now is Noctalia's GTK template, which
+# emits noctalia.css and imports it into gtk.css. So the split is:
+#   Noctalia owns colour   -> ignored here (generated, and it would fight us)
+#   chezmoi owns behaviour -> gtk-3.0/settings.ini and gtk-4.0/settings.ini
+.config/gtk-3.0/gtk.css
+.config/gtk-3.0/colors.css
+.config/gtk-3.0/noctalia.css
+.config/gtk-4.0/gtk.css
+.config/gtk-4.0/colors.css
+.config/gtk-4.0/noctalia.css
+.config/qt6ct
+# .gtkrc-2.0 stays ignored permanently: nothing left after the migration is a
+# GTK2 app, so managing it would buy nothing and would only pick a fight with
+# kde-gtk-config while Plasma is still installed for the prototype phase.
 .gtkrc-2.0
 .gtkrc-2.0.mine
 
 # ── Runtime / machine-local state, never source-controlled ───────────────────
 .config/chezmoi
+# NB: this also covers ~/.local/state/noctalia/settings.toml - the layer
+# Noctalia's Settings GUI writes, which loads LAST and beats the config.toml
+# this repo manages. Correctly excluded: a file the app rewrites on every click
+# is not a dotfile. scripts/doctor.sh warns when it is non-empty so the drift
+# stays visible; promote what you want to keep into config.toml.
 .local/state
 
 # ── Secrets: generated per machine by scripts/secrets-setup.sh, never stored ──
@@ -25,9 +46,11 @@
 .docker/config.json
 
 # ── Desktop-conditional ──────────────────────────────────────────────────────
-{{ if ne .desktop "hyprland" }}
-.config/hypr
-{{ end }}
 {{ if ne .desktop "niri" }}
 .config/niri
+.config/noctalia
+.config/xdg-desktop-portal
+{{ end }}
+{{ if ne .desktop "hyprland" }}
+.config/hypr
 {{ end }}

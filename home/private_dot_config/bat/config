@@ -4,9 +4,22 @@
 --paging=never
 --style=numbers,changes,header
 
-# Theme: `auto` asks the terminal for its background via OSC 11 (bat >= 0.25)
-# and picks a light or dark theme accordingly. Catppuccin themes are part of
-# the deferred theming work; until then these are bat's built-ins.
---theme=auto
---theme-light="Monokai Extended Light"
---theme-dark="Monokai Extended"
+# NB: pinned, NOT `--theme=auto`. Two reasons, both found by testing rather than
+# assuming:
+#
+#   1. `auto` asks the terminal for its background over OSC 11. When that query
+#      cannot be answered - a pipe, a non-TTY, a terminal that does not reply -
+#      bat silently falls back to its BUILT-IN default (Monokai Extended) and
+#      ignores --theme-light/--theme-dark entirely. Verified: with
+#      --theme=auto set, output was byte-identical to Monokai Extended, not to
+#      either configured theme. A theme setting that quietly does nothing is
+#      exactly the failure mode this repo keeps running into.
+#   2. There is nothing to switch between any more. ghostty is pinned to
+#      `theme = catppuccin-latte`, so the terminal background is a known, fixed,
+#      light colour. `auto` was solving a problem that no longer exists.
+#
+# Also: this was the last item of "deferred theming work" and it needed no work
+# at all - bat has bundled Catppuccin since 0.24, so there is no .tmTheme to
+# vendor and no `bat cache --build` hook to add. Check `bat --list-themes`
+# before assuming a theme needs shipping.
+--theme="Catppuccin Latte"
