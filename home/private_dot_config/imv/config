@@ -1,8 +1,0 @@
-# imv - the Gwenview replacement. Wayland-native, keyboard-driven.
-# NB: colours here are hex WITHOUT a leading '#'; imv rejects the '#' form.
-[options]
-background = eff1f5
-overlay_text_color = 4c4f69
-overlay_background_color = ccd0da
-overlay_font = Inter:10
-suppress_default_binds = false
