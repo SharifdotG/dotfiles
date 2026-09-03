@@ -1,0 +1,22 @@
+# The aggregate memory ceiling for the browser. Nothing runs here yet at boot;
+# the scope drop-in next door is what puts Brave into it.
+#
+# WHY A SLICE AT ALL, when app-org.chromium.Chromium-.scope.d/50-memory.conf
+# already carries a MemoryHigh: because cgroup limits are PER-CGROUP, not
+# per-application. Brave does not reliably run as one scope. Measured
+# 2026-09-03 on a normal session: 33 processes in
+# app-org.chromium.Chromium-34947.scope and 2 more in
+# app-org.chromium.Chromium-285773.scope - two live scopes at once, because the
+# scope name is fixed at first launch and a relaunch makes a second one. A
+# per-scope 6G cap on two scopes is a 12G ceiling, which is not a ceiling.
+# A slice caps the SUM, so the number below means what it says no matter how
+# many scopes Chromium decides to create.
+#
+# NB: this is a USER slice (~/.config/systemd/user), not a system one. Brave's
+# scopes live under user@1000.service/app.slice, so the parent has to be in the
+# same manager or it cannot be a parent at all.
+[Unit]
+Description=Browser memory ceiling
+
+[Slice]
+MemoryHigh=6G

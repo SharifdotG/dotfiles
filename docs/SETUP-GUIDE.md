@@ -713,10 +713,13 @@ On Firefox the browser alone was **53% of the 15.3 GiB this machine actually has
 reason it still felt fine was that **3.48 GiB of it was not in RAM at all** — compressed in
 zram at 3.79:1, costing about 0.92 GiB of physical memory.
 
-Brave Origin measures far lower (~2.9 GiB on the same browsing), so the arithmetic is less
-brutal now. But **do not read that as headroom**: the five permanently-open web apps that
-dominated the Firefox number cost the same in any engine, and Brave has **no memory cap at
-all** where Firefox had a 6 GiB ceiling. Re-measure under real load before relaxing anything.
+Brave Origin measures far lower (~3.3 GiB PSS on the same browsing), so the arithmetic is
+less brutal now. But **do not read that as headroom**: the five permanently-open web apps
+that dominated the Firefox number cost the same in any engine. Brave is capped again as of
+2026-09-03 — 6 GiB, via `browser.slice` plus a dash-truncation drop-in, see *The cap that
+used to matter, then didn't, and now does again* below — but at ~2× the current working set
+that is a backstop, not a working constraint. Re-measure under real load before relaxing
+anything.
 
 Either way, zram is not a safety margin here. It is load-bearing, permanently, every day —
 worth knowing before you ever set `vm.swappiness` back to something "sensible".
@@ -798,14 +801,15 @@ Two honest caveats, because this is the kind of number that gets quoted out of c
   Firefox setup was five permanently-open logged-in web apps at ~580 MB each. Those cost the
   same in any engine. No browser switch touches them.
 
-#### The cap that used to matter, and why it is gone
+#### The cap that used to matter, then didn't, and now does again
 
 Firefox got a hard 6 GiB ceiling here, and it was genuinely load-bearing: measured working
 set 8.13 GiB against a 6 GiB `MemoryHigh`, with **~114,000 throttle events in 8 hours** —
 roughly four per second, sustained. The machine felt fine *because* of that cap.
 
-**That mechanism does not port to Brave, and it is worth understanding why rather than
-quietly dropping it.**
+That mechanism did not survive the switch to Brave, and this guide spent a while asserting
+that **no** mechanism could. That was wrong. Here is the corrected reasoning, because the
+wrong version was specific and confident and is worth being able to recognise.
 
 Under Plasma, KDE's KProcessRunner launches each `.desktop` app as a transient unit, so
 Firefox landed in `app-firefox@<hex>.service` and a drop-in on the *template* unit applied
@@ -813,35 +817,77 @@ to every instance. Brave gets such a unit too — `app-brave\x2dorigin@<hex>.ser
 created and does exist. But **Chromium then self-registers its own transient scope**,
 `app-org.chromium.Chromium-<PID>.scope`, and migrates the bulk of its processes into it.
 
-Measured on this machine:
+Measured on this machine (2026-09-03, Fedora, before the move):
 
 ```
-app-brave\x2dorigin@<hex>.service        2 processes    391 MB
-app-org.chromium.Chromium-6464.scope    32 processes   1034 MB
+app-brave\x2dorigin@<hex>.service         2 processes
+app-org.chromium.Chromium-34947.scope    33 processes
+app-org.chromium.Chromium-285773.scope    2 processes
 ```
 
-A drop-in on the template unit would therefore cap about 15% of the browser and silently
-miss the rest. And the scope's name carries the **PID**, so no template drop-in can target
-it at all.
+Note the **two** Chromium scopes. The name is fixed at first launch, and a relaunch inside
+the same session makes another one. That matters below.
 
-> **NB — so there is currently NO per-app memory cap on the browser, and that is a
-> deliberate choice rather than an oversight.** Shipping a drop-in that catches two
-> processes out of thirty-four would be worse than shipping nothing: it would look
-> configured, `systemctl` would confirm the file, and the ceiling would not exist. That is
-> the exact failure this guide keeps warning about.
+So a drop-in on the template unit would cap about 5% of the browser and silently miss the
+rest, and the scope's name carries a PID that changes every launch. The old conclusion drawn
+from that — *therefore nothing can target it* — skipped a step.
+
+> **The step it skipped: templating is not the only way to reach a family of unit names.**
+> systemd also searches drop-in directories built by **repeatedly truncating the unit name
+> at dashes**. `systemd.unit(5)`, verified against the systemd 259 man page on this machine:
 >
-> `scripts/doctor.sh` reports Brave's live cgroups and total PSS as a **note** rather than a
-> pass/fail, so if the browser ever grows into a problem you will see it rather than
-> discover it.
+> > for a unit name `foo-bar-baz.service` not only the regular drop-in directory
+> > `foo-bar-baz.service.d/` is searched but also both `foo-bar-.service.d/` and
+> > `foo-.service.d/`
 >
-> If a ceiling becomes necessary, the mechanism is a **slice**, not a unit drop-in — cgroup
-> limits are hierarchical, so a child cgroup cannot exceed its parent's `MemoryHigh`
-> regardless of what Chromium creates inside it. That needs verifying against where Chromium
-> actually places its scope before it is trusted.
+> `app-org.chromium.Chromium-<PID>.scope` therefore reads
+> **`app-org.chromium.Chromium-.scope.d/`** for any PID at all. That is a different systemd
+> feature from unit templating, which is why "no *template* drop-in can target it" was true
+> and useless at the same time.
 
-Whether it is needed is an open question. Firefox was 8.13 GiB; Brave with the same real
-browsing measures around 2.9 GiB. Watch the doctor note before adding machinery.
+The ceiling is now two files, both in the chezmoi tree under
+`home/private_dot_config/systemd/user/`:
 
+| File | Does |
+|---|---|
+| `app-org.chromium.Chromium-.scope.d/50-memory.conf` | `MemoryHigh=6G` + `Slice=browser.slice` on every Chromium scope, whatever its PID |
+| `browser.slice` | `MemoryHigh=6G` on the **sum** of those scopes |
+
+Both, not either. They cover different failure modes:
+
+- **The slice is the real ceiling.** cgroup limits are per-cgroup, so a 6 GiB cap applied to
+  two live scopes is a 12 GiB ceiling — not a ceiling. The slice caps the total no matter
+  how many scopes Chromium invents.
+- **The scope `MemoryHigh` is what reaches a browser that is already running.** `Slice=`
+  only binds scopes created *after* the drop-in lands, because a live cgroup cannot be
+  re-parented. Right after install, `systemctl --user show` reports
+  `Slice=browser.slice` while `ControlGroup=` still says `app.slice`; the scopes move at the
+  next Brave launch. Until then the per-scope value is the only thing holding.
+
+Verified live, against a running Brave and against synthetic scopes made to mimic Chromium's
+naming and its launch properties:
+
+```
+systemctl --user daemon-reload      # no browser restart needed
+systemctl --user show app-org.chromium.Chromium-<PID>.scope -p MemoryHigh -p DropInPaths
+  → MemoryHigh=6442450944, the drop-in listed in DropInPaths
+cat /sys/fs/cgroup/.../app-org.chromium.Chromium-<PID>.scope/memory.high
+  → 6442450944
+```
+
+`Slice=` in the drop-in also beats the `Slice=app.slice` Chromium passes explicitly in its
+own `StartTransientUnit` call — a fresh scope launched with `--property=Slice=app.slice`
+landed in `user@1000.service/browser.slice/` anyway.
+
+> **Read the number differently than you read Firefox's.** 6 GiB against Firefox's 8.13 GiB
+> working set was an *actively throttling* cap, firing four times a second, and the machine
+> depended on it. 6 GiB against Brave's measured ~3.3 GiB PSS is a **backstop with roughly
+> 2× headroom** — `memory.events` reads `high 0`, i.e. it has never fired. Same number,
+> completely different job. Do not "tune" it down toward the working set to make it look
+> active; the Firefox experience is what that produces.
+
+`scripts/doctor.sh` now checks both as pass/fail rather than reporting a note, plus a note
+for how many scopes have physically moved into the slice yet.
 #### Diagnosing it
 
 `brave://system` and Brave's own Task Manager (`Shift+Esc`) give a per-tab breakdown.
@@ -1398,7 +1444,9 @@ correct and did nothing:
 - The browser `MemoryHigh` drop-in survived two renames (Fedora's
   `app-org.mozilla.firefox@` → Arch's `app-firefox@`) and then stopped applying entirely,
   because Chromium self-registers a PID-named scope and migrates its processes out of the
-  unit KDE creates. Measured: 2 processes capped, 32 not.
+  unit KDE creates. Measured: 2 processes capped, 32 not. (Fixed 2026-09-03 with a
+  dash-truncation drop-in plus a slice; the *second* failure here was concluding for a while
+  that it could not be fixed at all.)
 
 None of the three produced an error. All three are the reason doctor now verifies from the
 **kernel** — the live `earlyoom` argv, the real cgroup path, `sysctl -n vm.swappiness` — and

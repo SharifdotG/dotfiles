@@ -129,24 +129,53 @@ else
   note "brave total (PSS)" "$(for p in $_bvpids; do
       awk '/^Pss:/{print $2}' "/proc/$p/smaps_rollup" 2>/dev/null; done |
       awk '{s+=$1} END {printf "%.2f GiB", s/1048576}')"
-  # NB: this is the check that replaced Firefox's `memory.high` check, and the
-  # reason it is a NOTE rather than a pass/fail is worth recording.
+  # NB: CORRECTION, 2026-09-03. This script used to say Chromium could not be
+  # capped, because "a template drop-in cannot target a PID-suffixed scope
+  # name". That sentence is true and it is beside the point. Templating is not
+  # the only way to reach a family of unit names: systemd's DASH-TRUNCATION
+  # drop-in search is a separate feature, and under it
+  # app-org.chromium.Chromium-<PID>.scope reads
+  # app-org.chromium.Chromium-.scope.d/ whatever the PID. That is where the cap
+  # lives now - see home/private_dot_config/systemd/user/ for both files and the
+  # full derivation. The old "if Brave ever needs a ceiling, the mechanism is a
+  # SLICE" note is also settled: it is a slice AND the drop-in, because the
+  # drop-in is what puts Brave into the slice.
   #
-  # Firefox got a hard 6 GiB ceiling from a drop-in on the transient unit KDE
-  # created for it (app-firefox@<hex>.service). That mechanism does NOT port to
-  # Chromium: Brave self-registers its OWN transient scope named
-  # app-org.chromium.Chromium-<PID>.scope and migrates the bulk of its
-  # processes into it. Measured here: 32 processes in the self-created scope
-  # versus 2 left in the unit KDE made. A template drop-in cannot target a
-  # PID-suffixed scope name, so there is currently NO per-app cap on the
-  # browser - and pretending otherwise would be worse than having none.
-  #
-  # If Brave ever needs a ceiling, the mechanism is a SLICE, because cgroup
-  # limits are hierarchical and a child cannot exceed its parent. That needs
-  # verifying against where Chromium places its scope before it is trusted.
+  # Two separate checks, because they fail independently and for different
+  # reasons:
+  #   MemoryHigh reaches an ALREADY-RUNNING Brave on daemon-reload.
+  #   Slice= binds only scopes created AFTER the drop-in landed, because a live
+  #   cgroup cannot be re-parented. So a Brave that was already running when
+  #   this was installed passes the first and fails the second until it is
+  #   restarted - expected, and exactly why the per-scope MemoryHigh exists
+  #   instead of relying on the slice alone.
+  _bvscopes=$(for p in $_bvpids; do cut -d: -f3 "/proc/$p/cgroup" 2>/dev/null; done |
+      sed 's|.*/||' | grep '\.scope$' | sort -u)
+  chk "cap on every brave scope"   ok "$(
+      _bad=0; _n=0
+      for s in $_bvscopes; do
+        _n=$((_n+1))
+        [ "$(systemctl --user show "$s" -p MemoryHigh --value 2>/dev/null)" = 6442450944 ] ||
+          _bad=$((_bad+1))
+      done
+      if   [ "$_n"   -eq 0 ]; then echo "no scopes found"
+      elif [ "$_bad" -eq 0 ]; then echo ok
+      else echo "$_bad/$_n uncapped"; fi)"
+  chk "browser.slice ceiling"      6442450944 \
+      "$(systemctl --user show browser.slice -p MemoryHigh --value 2>/dev/null)"
+  # Not a chk: fails benignly until the next Brave restart, see the NB above.
+  note "scopes actually in the slice" "$(
+      _in=0; _n=0
+      for s in $_bvscopes; do
+        _n=$((_n+1))
+        case "$(systemctl --user show "$s" -p ControlGroup --value 2>/dev/null)" in
+          */browser.slice/*) _in=$((_in+1));;
+        esac
+      done
+      if [ "$_n" -gt 0 ] && [ "$_in" -eq "$_n" ]; then echo "$_in/$_n"
+      else echo "$_in/$_n (restart brave to re-parent the rest)"; fi)"
   note "cgroups in use" "$(for p in $_bvpids; do cut -d: -f3 "/proc/$p/cgroup" 2>/dev/null; done |
       sed 's|.*/||' | sort -u | tr '\n' ' ')"
-  note "  (no MemoryHigh cap)" "Chromium self-scopes; see the NB in this script"
 fi
 
 step "Rollback safety"

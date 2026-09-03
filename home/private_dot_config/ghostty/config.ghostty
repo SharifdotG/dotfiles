@@ -174,9 +174,14 @@ shell-integration-features = cursor,sudo,title
 confirm-close-surface = false
 
 # ── tuned for long-running CLI agents ────────────────────────────────────────
-# Faster wheel scrolling, because reading back through an agent's output is a
-# thing you do constantly.
-mouse-scroll-multiplier = precision:1,discrete:5
+# Lines per mouse-wheel detent. Ghostty's default is 3; this is deliberately
+# BELOW it because smaller steps read as smoother. Raise it if you find yourself
+# scrolling forever through long agent output — it is a straight trade between
+# "feels smooth" and "covers ground".
+# NB: `precision` is a separate track for touchpads and hi-res wheels, which
+# deliver pixel-precise events and are already smooth. This number only affects
+# discrete wheel clicks.
+mouse-scroll-multiplier = precision:1,discrete:2
 
 # NB: three settings were CHECKED and then deliberately NOT written here,
 # because Ghostty's defaults already do the right thing and restating a default

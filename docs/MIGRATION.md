@@ -380,10 +380,16 @@ The ordering *is* the content.
     for p in $(pgrep -f /opt/brave.com/brave-origin); do cut -d: -f3 /proc/$p/cgroup; done | sort | uniq -c
     ```
     Expect `app-org.chromium.Chromium-<PID>.scope` — Chromium self-registers its own
-    transient scope and migrates out of the unit KDE creates, which is **why there is no
-    `MemoryHigh` cap on the browser any more**. Measured on the old machine: 32 processes in
-    the self-created scope, 2 left in KDE's unit. See Phase 5. `doctor.sh` reports this as a
-    note so it stays visible.
+    transient scope and migrates out of the unit KDE creates. Measured on the old machine:
+    33 processes in the self-created scope, 2 in a second Chromium scope, 2 left in KDE's
+    unit. This used to mean the browser had no `MemoryHigh` cap; since 2026-09-03 it is
+    capped again by `home/private_dot_config/systemd/user/browser.slice` plus the
+    `app-org.chromium.Chromium-.scope.d/` dash-truncation drop-in. See Phase 5.
+    `doctor.sh` checks both, so a rename that breaks the targeting shows up as a failure
+    rather than as silence.
+
+    Expect `scopes actually in the slice` to read `0/N` until the first Brave restart on the
+    new machine — a live cgroup cannot be re-parented, and that is not a fault.
 12. `./scripts/doctor.sh`, and fix what it reports.
 13. **Re-measure and update the guide's baseline table.** Plasma session idle (was 0.58 GiB
     on Fedora — expect it to be close), Brave working set, and the zram ratio. This closes the loop the guide promises, and it is the only way the
