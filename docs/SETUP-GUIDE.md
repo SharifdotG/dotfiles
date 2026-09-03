@@ -8,7 +8,7 @@
 see Phase 1.
 **Displays:** `eDP-1` 1920×1080 @ scale 1.25 · `HDMI-A-2` 1920×1080 @ scale 1.0
 **Target OS:** CachyOS (Arch) · KDE Plasma 6, Wayland
-**Workload:** Docker, Angular/Nx monorepos, microservices, nopCommerce (.NET + SQL Server)
+**Workload:** Docker, Angular/Nx monorepos, microservices, nopCommerce (.NET + PostgreSQL)
 **Curated by SharifdotG · Revised for low-RAM stability**
 
 > **The one thing to take from this guide, stated up front.** Measured on this machine, the
@@ -384,12 +384,12 @@ installed by `system/apply.sh`:
 ExecStart=
 ExecStart=/usr/bin/earlyoom -r 3600 -m 4 -s 20 \
   --avoid '^(systemd|systemd-.*|sshd|kwin_wayland|plasmashell|kded6|krunner|ksmserver|plasma-.*|sddm|sddm-greeter|dbus-.*|pipewire|wireplumber|NetworkManager)$' \
-  --prefer '^(node|brave|code-insiders|dotnet|sqlservr|java)$' \
+  --prefer '^(node|brave|code-insiders|dotnet|java)$' \
   -n
 ```
 
 That means: trigger when free RAM drops below 4% *or* free swap below 20%, never touch the
-session, preferentially kill Node/Brave/SQL Server, and send a desktop notification (`-n`)
+session, preferentially kill Node/Brave/.NET, and send a desktop notification (`-n`)
 so you know what died and why.
 
 > **NB — why an `ExecStart=` override and not `/etc/default/earlyoom`, which is where this
@@ -500,22 +500,46 @@ Replace Docker Desktop's GUI with something that costs ~15 MB:
 sudo pacman -S --needed lazydocker   # in extra, no AUR needed
 ```
 
-#### 🩸 The nopCommerce / SQL Server trap
+#### 🩸 The nopCommerce / Postgres memory trap
 
-This is very likely what was killing you. **SQL Server in a container reads the *host's* total RAM and helps itself to ~80% of it.** It doesn't know it's in a container. On your 16 GB machine that's SQL Server deciding it owns 12.8 GB.
+Postgres fails the opposite way to the SQL Server this stack used to run, and the difference
+matters because the old advice does not transfer.
 
-Always set both the container limit *and* the SQL Server-internal limit:
+**SQL Server was a single-number problem.** In a container it reads the *host's* total RAM and
+helps itself to ~80% of it — 12.8 GB on this machine — so one env var fixed it. Postgres never
+does that. `shared_buffers` defaults to **128 MB** and stays there no matter how much RAM the
+host has, so out of the box it is nowhere near the biggest thing running.
+
+**Postgres is a multiplication problem instead**, and every factor defaults small enough to look
+harmless:
+
+- `work_mem` is **4 MB**, and it is allocated **per sort or hash operation**, not per
+  connection. One catalog query with several hash joins allocates it several times over, and
+  `hash_mem_multiplier` (default **2.0**) lets each hash node take double.
+- `max_connections` is **100**. Multiply the line above by however many backends are busy.
+- `maintenance_work_mem` is **64 MB**, and **autovacuum takes it per worker** unless you set
+  `autovacuum_work_mem` separately.
+
+So there is no single knob that means "use at most N GB" — the same conclusion the browser cap
+reached from the other direction. Bound it from outside with the container limit, and keep the
+individual knobs small so the multiple stays small:
 
 ```yaml
 services:
-  sqlserver:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+  postgres:
+    image: postgres:17-alpine
     environment:
-      ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: "${SA_PASSWORD}"
-      MSSQL_MEMORY_LIMIT_MB: "2048"   # SQL Server's own max server memory
-    mem_limit: 2560m                  # hard kernel cgroup ceiling
-    memswap_limit: 2560m              # no swap escape hatch
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: nopcommerce
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c work_mem=8MB
+      -c maintenance_work_mem=64MB
+      -c autovacuum_work_mem=32MB
+      -c max_connections=50
+    mem_limit: 1g                     # hard kernel cgroup ceiling
+    memswap_limit: 1g                 # no swap escape hatch
     cpus: 2.0
 
   nopcommerce:
@@ -718,9 +742,8 @@ MB and makes the desktop worse.
 | Desktop session, idle | **0.58 GiB** | unchanged — same desktop, newer packages |
 | Browser, real working set | Firefox: **8.13 GiB** (4.65 resident + 3.48 in zram) | Brave Origin: ~2.9 GiB measured — but the same web apps, so re-measure under load |
 | VS Code + TS language server on Nx monorepo | 1.5–3.0 GB | unchanged |
-| SQL Server container (capped) | 2.5 GB *when running* | unchanged |
 | nopCommerce .NET (workstation GC) | 0.5–1.0 GB | unchanged |
-| Postgres + Redis + gateway | 0.7 GB | unchanged |
+| Postgres + Redis + gateway | 0.7 GB | now also nopCommerce's database — a capped Postgres is ~1 GB, not the 2.5 GB the SQL Server container cost |
 | Docker daemon + containerd | 0.3 GB | ~0 when idle, with `docker.socket` activation |
 
 **It does not fit, and it has not been fitting.** That is the finding, and the old version of
@@ -749,8 +772,9 @@ Two consequences for how you read the rest of this guide:
 - The lightest possible desktop would be worth a couple of hundred megabytes against this.
   If you came here expecting the window manager to be the fix, you are tuning the wrong
   thing — and that is not hypothetical, this guide once made exactly that mistake.
-- The SQL Server cap and the Node heap limit are not optimisations. Without them SQL Server
-  alone claims 12.8 GB against a budget that is already over.
+- The Node heap limit and the database container's `mem_limit` are not optimisations. The
+  budget is already over before either of them; anything unbounded takes it straight past the
+  point where zram stops absorbing the difference.
 
 ---
 
@@ -1598,10 +1622,11 @@ The list below is ordered by measured impact, not by how satisfying the cleanup 
    and a config only helps once something reads it back. That is what `scripts/doctor.sh` is
    for.
 
-> **On SQL Server:** the original item 2 warned it would claim ~80% of host RAM. Still true
-> *when you run it* — but the measured stack here (Postgres, Traefik, nginx, MinIO, .NET,
-> Keycloak, Tryton) is a few hundred MB of RSS. Docker is not the problem on this machine.
-> Keep the caps in the compose files for when SQL Server comes back.
+> **On the database:** the original item 2 warned SQL Server would claim ~80% of host RAM.
+> That was true, and it is now moot — nopCommerce development moved to **PostgreSQL**, which
+> has no such behaviour, and SQL Server is gone from this guide and from earlyoom's `--prefer`
+> list. The measured stack (Postgres, Traefik, nginx, MinIO, .NET, Keycloak, Tryton) is a few
+> hundred MB of RSS. Docker is not the problem on this machine.
 >
 > Docker's *disk* is a different story: 9.08 GB of images (2.74 GB reclaimable) and
 > **7.49 GB of build cache, 100% reclaimable**, on a 238 GB disk. That is what
