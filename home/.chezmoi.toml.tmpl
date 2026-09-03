@@ -7,8 +7,35 @@
          chezmoi init --promptString desktop=plasma
 */ -}}
 {{- $desktop := promptStringOnce . "desktop" "Desktop session (plasma/none)" "plasma" -}}
+{{- /*
+     Host for a private/work git remote that needs the generic credential
+     helper. Kept out of the repo on purpose: this repo is public (see
+     scripts/secrets-setup.sh), and a hostname is inventory disclosure even
+     though it is not a credential. Leave BLANK if you have none - dot_gitconfig
+     omits the whole section then.
+*/ -}}
+{{- $workGitHost := promptStringOnce . "workGitHost" "Private git host for the generic credential helper (blank for none)" "" -}}
+
+# Pin the source directory into the generated config.
+#
+# WHY: this repo is cloned wherever you keep it (~/dotfiles, ~/Documents/...),
+# never chezmoi's default ~/.local/share/chezmoi. bootstrap.sh passes
+# `--source "$REPO"` so IT works, but nothing recorded the path, so every bare
+# chezmoi command afterwards - apply, diff, add, re-add, update - looked in the
+# default location, found nothing, and failed. `chezmoi doctor` said
+# "error source-dir: open ~/.local/share/chezmoi: no such file or directory"
+# on a machine that was otherwise fully set up.
+#
+# NB: .chezmoi.sourceDir is resolved AFTER .chezmoiroot, so this stores
+# <repo>/home, which is the correct value - chezmoi then reads the source state
+# straight from there with no second .chezmoiroot hop.
+#
+# NB: it is baked at `chezmoi init` time. Move the repo and re-run
+# `chezmoi init --source <new path>`.
+sourceDir = {{ .chezmoi.sourceDir | quote }}
 
 [data]
     name    = {{ $name | quote }}
     email   = {{ $email | quote }}
     desktop = {{ $desktop | quote }}
+    workGitHost = {{ $workGitHost | quote }}

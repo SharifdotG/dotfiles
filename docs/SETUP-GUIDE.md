@@ -460,13 +460,33 @@ sudo nano /etc/docker/daemon.json
   "log-opts": { "max-size": "10m", "max-file": "3" },
   "storage-driver": "overlay2",
   "builder": {
-    "gc": { "enabled": true, "defaultKeepStorage": "10GB" }
+    "gc": {
+      "enabled": true,
+      "policy": [
+        {
+          "keepDuration": "48h",
+          "maxUsedSpace": "2GB",
+          "filter": ["type=source.local,type=exec.cachemount,type=source.git.checkout"]
+        },
+        { "maxUsedSpace": "10GB" },
+        { "maxUsedSpace": "10GB", "all": true }
+      ]
+    }
   },
   "default-ulimits": {
     "nofile": { "Name": "nofile", "Soft": 65536, "Hard": 65536 }
   }
 }
 ```
+
+> **`defaultKeepStorage` is gone — this used to say `"gc": { "enabled": true,
+> "defaultKeepStorage": "10GB" }`.** BuildKit deprecated that key in Docker 25 in favour of
+> `policy` entries with `reservedSpace` / `maxUsedSpace` / `minFreeSpace`. It is still
+> *accepted*, with a warning, which is the dangerous part: on the engine that finally drops it
+> the cap silently becomes a no-op and the build cache grows unbounded again — the exact 7.49 GB
+> that started this section. The three policies above are Docker's own default shape with our
+> number: short-lived context/mount cache trimmed hard, everything else held under 10 GB, and a
+> final `all` pass so nothing is exempt.
 
 ```bash
 sudo systemctl restart docker
@@ -751,18 +771,35 @@ Two things worth knowing about that resolution:
 - **`starship` and `chezmoi` are real repo packages on Arch.** On Fedora they were manual
   installs — `starship` was marked `-` in `packages/core.tsv` and bootstrap fell back to
   piping the upstream installer into `sh`, dropping a binary in `/usr/local/bin`. Both of
-  those special cases are gone, and `pkg_unavailable arch` now returns **nothing**.
-- **Exactly two packages come from the AUR**: `visual-studio-code-insiders-bin` and
-  `vesktop-bin` and `brave-origin-bin`. They are declared in a separate `aur` column and
-  installed in their own `paru` transaction, so one failed build cannot take the other ~90
-  repo packages down with it.
+  those special cases are gone. What is left in the `-` column is deliberate:
+  `pkg_unavailable arch` returns **zed**, **claude-code** and **mint**, and `bootstrap.sh`
+  dispatches on each by name rather than just warning. The first two have (or could have) a
+  package but self-update in place, so pacman would only chase a version the app has already
+  replaced; `mint` is the original meaning of `-`, no package anywhere.
+- **A minority of packages come from the AUR** — the editors, the browser and the AI
+  desktop apps. Per the rule above, do not re-list them here; run
+  `. lib/pkg.sh && pkg_resolve aur packages/*.tsv` for the current set. (The old wording said
+  "exactly two" and then named three, which is how you can tell a hand-maintained count ages.)
+  They are declared in a separate `aur` column and installed in their own `paru` transaction,
+  so one failed build cannot take the repo packages down with it.
 
-Postgres needs initialising if you run it on the host rather than in Docker:
+Postgres needs initialising if you run it on the host rather than in Docker. **`postgresql-setup`
+does not exist on Arch** — it is a Fedora/RHEL wrapper, and this guide carried the Fedora command
+long after the repo stopped targeting Fedora. The Arch equivalent is `initdb` run as the
+`postgres` user:
 
 ```bash
-sudo postgresql-setup --initdb
+sudo -iu postgres initdb -D /var/lib/postgres/data
 sudo systemctl enable --now postgresql
 ```
+
+> Also worth knowing: **Arch splits the Postgres packages the opposite way to Fedora.** There is
+> no `postgresql-server` to install. On Fedora `postgresql` is the *client* and
+> `postgresql-server` is the daemon; on Arch `postgresql` **is** the daemon, and it depends on
+> `postgresql-libs`, which is the client and `libpq`. `packages/dev.tsv` carries the one row and
+> you get both — the note there used to claim it was "the host client", which was the Fedora
+> meaning and simply wrong on this machine.
+
 > Honestly: for your workload, run Postgres in Docker instead and skip the host install entirely. One less always-on service.
 
 ### 🦊 Brave Origin
@@ -962,11 +999,66 @@ paru -S visual-studio-code-insiders-bin
 }
 ```
 
-**Zed** as a lightweight alternative — you already had it on Windows, and for quick edits it starts in ~200 MB versus VS Code's 800 MB+:
+**Zed** as a lightweight alternative — for quick edits it starts in ~200 MB versus VS Code's
+800 MB+. The channel run here is **Preview**, which is why this is the one editor that is *not*
+a package:
 
 ```bash
-curl -f https://zed.dev/install.sh | sh
+curl -fsSL https://zed.dev/install.sh | ZED_CHANNEL=preview sh   # -> ~/.local/zed-preview.app
 ```
+
+> **The variable goes on the RIGHT of the pipe.** `ZED_CHANNEL=preview curl … | sh`
+> scopes the assignment to `curl`, and the installer reads
+> `channel="${ZED_CHANNEL:-stable}"` from the environment of the `sh` on the other side —
+> so that form installs **stable**, which then `rm -rf`s `~/.local/zed.app` and re-points
+> `~/.local/bin/zed`. This guide had it the wrong way round; `bootstrap.sh` did not.
+
+`zed` (stable) does exist in `extra`, and normally that would win — an unmanaged binary under
+`~/.local` is the trap `starship` and `chezmoi` were in under Fedora. Preview is the exception
+that earns it: the repos do not carry the channel, and the installer's build **updates itself
+in-app**, so a package would only ever be chasing a version Zed has already replaced. It is
+declared in `packages/dev.tsv` as `-` and `bootstrap.sh` runs the installer, so the manifest
+still describes the whole machine.
+
+### 🤖 AI apps
+
+All of these are in `packages/dev.tsv` (CLIs and IDEs) and `packages/desktop.tsv` (the two
+chat apps), so bootstrap installs them. What is worth knowing beyond the manifest:
+
+- **Claude Desktop is officially supported on Linux — but not on Arch.** Anthropic opened the
+  Linux beta on **2026-06-30**, and it ships as a `.deb` from their own apt repository for
+  **Ubuntu 22.04+ / Debian 12+ only**. The docs are explicit that on Fedora and Arch you should
+  run the CLI instead. The AUR `claude-desktop` package is what bridges that: it downloads the
+  official `.deb` from `downloads.claude.ai` and repackages its payload, adding symlinks for the
+  Debian paths Cowork hardcodes (`virtiofsd`, the OVMF firmware names). So you get Anthropic's
+  own binary — just not through a channel Anthropic tests. Expect it to lag the apt repo, and
+  expect breakage to be yours to debug.
+- **Cowork wants a VM, and you have opinions about that.** Cowork runs agentic work inside a
+  **QEMU/KVM virtual machine** the app hosts. That is the same architecture this guide told you
+  to reject in Phase 4 when it said to drop Docker Desktop — with one difference that matters:
+  Docker Desktop's VM is always on and costs you 2–4 GB whether you use it or not, whereas
+  Cowork's starts when you open the tab. On 16 GB, treat it as a thing you turn on deliberately.
+  Chat and Claude Code do not need it, and if you never open Cowork the VM never starts.
+  To use it: enable virtualization in the BIOS, and `sudo usermod -aG kvm "$USER"` — the group
+  is needed even if `/dev/kvm` already works for you, because Cowork also opens
+  `/dev/vhost-vsock`, which only `kvm` members can. The `vhost_vsock` module autoloads.
+- **Missing from the Linux beta:** Computer Use, dictation, and the Quick Entry global hotkey
+  on native Wayland (it needs the desktop's GlobalShortcuts portal — `xdg-desktop-portal-kde`
+  provides one, so Plasma should be fine; X11 works unconditionally).
+- **The CLIs are the durable half.** `claude-code`, `openai-codex` and `antigravity-cli` are
+  terminal tools with no VM, no Electron and no distro caveats. When a desktop app breaks after
+  an upstream bump, the CLI is what keeps working.
+- **Claude Code installs itself, like Zed Preview.** Anthropic's `claude.ai/install.sh` is the
+  path their own docs point Arch users at, and it self-updates into
+  `~/.local/share/claude/versions/<ver>` behind a `~/.local/bin/claude` symlink. There *is* an
+  AUR `claude-code`, but it would pin a version paru has to chase against a binary that already
+  updates itself. Marked `-` in the manifest; `bootstrap.sh` runs the installer once and then
+  leaves it alone.
+- **`openai-codex` is in `extra`.** Do not "fix" it over to `openai-codex-bin`; the AUR build
+  tracks a different channel and costs you the atomic pacman transaction for nothing.
+- **`zed` is in `extra` too, and is deliberately not used** — see the Preview note above. Do
+  not "fix" the `-` row over to `zed` or to `zed-preview-bin` either: the first is the wrong
+  channel and the second lags and does not self-update.
 
 ### 💬 Chat & Social
 
@@ -978,8 +1070,9 @@ paru -S vesktop-bin
 > pnpm: 30–60 minutes on 4 cores, and multiple GB of RAM while it runs. On this machine that
 > build can itself trip the OOM protections Phase 4 just installed.
 
-For **LinkedIn, Reddit, WhatsApp, X, YouTube Music, Figma, ChatGPT, Claude** — the browser
-switch actually improved this. Firefox needed a workaround here because **Mozilla removed
+For **LinkedIn, Reddit, WhatsApp, X, YouTube Music, Figma** — the browser switch actually
+improved this. (**ChatGPT and Claude are no longer on this list**: both ship native Linux
+desktop apps now and are in `packages/desktop.tsv`. See AI apps above.) Firefox needed a workaround here because **Mozilla removed
 site-specific browser / PWA support**, so there was no "install page as app". Chromium has it
 natively.
 
@@ -1167,8 +1260,36 @@ alias dprune='docker system prune -f && docker builder prune -f'
 # Postgres, MinIO and Keycloak data. `-a` separately removes every image not backed
 # by a RUNNING container. The old version of this alias had both flags.
 alias lzd='lazydocker'
-alias nxr='nx reset'
+alias nxr='nx reset'   # only inside an Nx workspace; nx is a per-repo binary
+
+# ---- PATH ----
+# Prepend through this, never a bare `export PATH="$dir:$PATH"` - the file gets
+# re-sourced (`exec zsh`, nested login shells) and a bare prepend duplicates.
+path_prepend() {
+  case ":$PATH:" in
+    *":$1:"*) ;;
+    *) export PATH="$1:$PATH" ;;
+  esac
+}
+path_prepend "$HOME/.local/bin"
+
+# npm's global prefix. NOT ~/.npmrc: that file is excluded from the repo because
+# it is where an auth token lands, so a prefix written there would not survive a
+# rebuild. This is also what keeps `npm i -g` out of /usr/lib/node_modules,
+# which pacman's nodejs package owns.
+export NPM_CONFIG_PREFIX="$HOME/.npm-global"
+path_prepend "$NPM_CONFIG_PREFIX/bin"
+
+# pnpm's global prefix. The PATH entry is $PNPM_HOME/bin, not $PNPM_HOME.
+export PNPM_HOME="$HOME/.local/share/pnpm"
+path_prepend "$PNPM_HOME/bin"
 ```
+
+> **`~/.npm-global` is load-bearing, not tidiness.** `bootstrap.sh` installs the Mintlify CLI
+> with `env NPM_CONFIG_PREFIX="$HOME/.npm-global" npm install -g mint` — passed explicitly,
+> because bootstrap can run before this zshrc has ever been sourced. `mint` is the one row in
+> `packages/dev.tsv` marked `-` for the *original* reason: no package exists in any repo or the
+> AUR. Upgrade it with `npm i -g mint@latest`, never with `sudo npm -g`.
 
 ```bash
 rm -f ~/.zcompdump*
@@ -1225,6 +1346,76 @@ screen, and the media keys work including `Shift`+volume for 1% steps.
 
 Worth adding: a shortcut for Ghostty (`Meta+Return` if you like), and `Ctrl+Shift+Esc` for
 System Monitor.
+
+### 🎨 The look: Catppuccin Latte Blue, Fluent, WhiteSur
+
+All of this is applied by `home/.chezmoiscripts/run_onchange_after_20-kde-theme.sh` on
+`chezmoi apply`. Nothing here needs clicking through System Settings on a rebuild.
+
+| Piece | What | Where it comes from |
+|---|---|---|
+| Colours | Catppuccin Latte Blue | `.chezmoiexternal.toml` → one `.colors` file, pinned to `v0.4.0` |
+| Window decoration | **Breeze** — KDE's own, recoloured | nothing to install |
+| Icons | Fluent | `packages/desktop.tsv` → AUR `fluent-icon-theme` |
+| Cursors | WhiteSur | `.chezmoiexternal.toml` → archive external |
+| UI font | Adwaita Sans 10 | `packages/desktop.tsv` → `adwaita-fonts` |
+| Mono font | Cascadia Code NF 10 | already there for Ghostty |
+| Wallpaper | Catppuccin Latte | committed, `~/.local/share/wallpapers/Catppuccin-Latte` |
+
+Four decisions in there are load-bearing:
+
+- **The window decoration stays Breeze.** Catppuccin ships a perfectly good Aurorae theme
+  (`CatppuccinLatte-Modern`/`-Classic`) and its installer sets it by default — this repo
+  deliberately does not. A colour scheme's `[WM]` section is what Breeze reads for the titlebar,
+  so Breeze comes out Catppuccin-coloured *while staying Breeze*: native button behaviour, native
+  layout, no Aurorae-specific rules about where the close button is allowed to sit.
+- **One file, not the whole Catppuccin installer.** `catppuccin/kde`'s `install.sh` also lays
+  down a Plasma style, a look-and-feel package, a splash, an Aurorae theme and its own cursors,
+  then drives them with `plasma-apply-lookandfeel`. We want the colours and nothing else, and the
+  colours are a single prebuilt `.colors` file in their repo. Pinned to a tag rather than `main`
+  because this file decides what every window looks like.
+- **Theme names are written only if the theme exists.** The script probes
+  `/usr/share/icons/<name>` and `~/.local/share/icons/<name>` before touching `kdeglobals` or
+  `kcminputrc`. Without that probe, a first bootstrap — or one failed AUR build — writes a name
+  for a theme that is not on disk, and Plasma falls back per-icon into something that reads as a
+  broken desktop rather than a missing theme. Writing nothing keeps the last working look.
+- **It is a script, not managed files.** Plasma *owns* `kdeglobals`, `kcminputrc`, `kwinrc` and
+  especially `plasma-org.kde.plasma.desktop-appletsrc`, and rewrites them constantly — the
+  wallpaper alone is per-screen, per-activity, per-containment. Managing them with chezmoi is the
+  GTK mistake in `home/.chezmoiignore` all over again. `kwriteconfig6` writes the handful of keys
+  we care about through the same API System Settings uses and leaves the rest of each file alone.
+
+> **NB — `~/.config/kdedefaults/` is where a Global Theme's *declared* values live**, separate
+> from your overrides in `~/.config/*rc`. If you ever need to know what a theme wanted versus
+> what you actually run, diff those two. It is also the only reliable way to recover a previous
+> icon or cursor theme name after something overwrites it.
+
+### 🔠 Fonts: why the fontconfig file looks like that
+
+`home/private_dot_config/fontconfig/fonts.conf` does two separable jobs — which family answers
+`sans-serif`/`serif`/`monospace`, and how glyphs are rasterised. The rasterisation half is tuned
+for **this panel specifically**: 14" 1920×1080 ≈ 157 ppi.
+
+- **`hintslight`, not `hintfull`.** Full hinting snaps stems to the pixel grid, which at 157 ppi
+  visibly distorts letterforms and ruins spacing. Slight hinting aligns vertically only and keeps
+  the designed shape — and it is what Adwaita Sans (an Inter derivative) and Cascadia are drawn
+  for. `hintnone` would just be blurry.
+- **`autohint` off.** With `hintslight`, FreeType's own interpreter beats the autohinter on fonts
+  that ship good hints, and both of ours do. Turning it on is the classic "my fonts look wrong
+  and I can't say why" setting.
+- **`rgba=rgb` + `lcdfilter=lcddefault`.** Subpixel rendering, correct for this panel's stripe
+  order, with the FIR filter that kills the colour fringing subpixel AA leaves on stem edges.
+  Both would need revisiting on a rotated display or an external panel.
+- **`embeddedbitmap` off.** Bitmap strikes are always worse than the outline at this density.
+- **`binding="strong"` on the family prepends.** With the default weak binding, a request that
+  already names a family — which is most of them, Qt and GTK both send one — keeps its own and
+  the prepend is ignored. That is how you get a desktop that only half-changes font.
+- **The family string is `Cascadia Code NF`, not `Cascadia Code`.** The Nerd Font build registers
+  under its own name; the plain name silently resolves to an unpatched Cascadia with no powerline
+  glyphs, which is how Starship and `eza` start drawing tofu.
+
+> Plasma does **not** read `fonts.conf` to choose its own UI font — that lives in `kdeglobals`
+> and is set by the theming script. The two have to agree, so change both or neither.
 
 ### 🖼 GTK apps: KDE already themes them — don't "fix" this
 

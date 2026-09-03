@@ -18,9 +18,29 @@
 # resolved. Two things it will not catch:
 #   - a theme name that does not resolve (fails at load, shows a startup
 #     "Configuration Errors" dialog — check `background`/`foreground` are set)
-#   - a shader that does not compile (same dialog; the launch log says
-#     `info(shadertoy): loaded custom shader` on success)
-# When in doubt, launch it and read the log.
+#   - a shader that does not compile
+#
+# CORRECTION, 2026-09-04. This block used to say a broken shader produced "the
+# same dialog", and that the launch log printed `info(shadertoy): loaded custom
+# shader` on success. BOTH ARE FALSE. Ghostty's own documentation for
+# `custom-shader`:
+#
+#   "If the shader fails to compile, the shader will be ignored. Any errors
+#    related to shader compilation will not show up as configuration errors
+#    and only show up in the log, since shader compilation happens after
+#    configuration loading on the dedicated render thread."
+#
+# And that log string does not exist anywhere in the 1.3.1 binary — checked
+# with `strings`. So a broken shader is SILENTLY DROPPED: the terminal opens
+# perfectly, +show-config still echoes the path back, and the effect is just
+# gone. There is no green light to look for.
+#
+# This is why the compile harness below is not optional pedantry — with two
+# shaders chained (there were briefly three; see the note above the
+# `custom-shader` lines), it is the only thing standing between a typo and an
+# effect that quietly stops existing. Two real bugs have already been caught
+# this way: a local variable named `length` shadowing the GLSL builtin, and
+# `iCursorVisible.x` on a uniform that is an int.
 
 # ── font ─────────────────────────────────────────────────────────────────────
 # NB: the family string is "Cascadia Code NF", not "Cascadia Code Nerd Font".
@@ -90,6 +110,58 @@ adjust-cell-height = 8%
 # Empty output means no theme was applied, whatever the theme line says.
 theme = Catppuccin Latte
 
+# ── how far the theme actually reaches ───────────────────────────────────────
+# The theme file sets palette 0-15 plus background/foreground/cursor/selection.
+# So programs emitting BASIC ANSI are recoloured to Catppuccin for free —
+# verified: `eza` and `ls --color` emit only 30-37/90-97 and come out themed.
+#
+# Two things it does NOT reach, worth knowing before chasing a colour that
+# refuses to change:
+#   - palette 16-255, the 256-colour cube. Stock xterm (#ff0000, #00005f …),
+#     which is outside the Catppuccin ramp. That is what palette-generate
+#     below is for.
+#   - 24-bit truecolor. `\e[38;2;R;G;B` names an exact colour and NO terminal
+#     setting can remap it. Verified: bat, starship and
+#     zsh-syntax-highlighting all emit truecolor — they look right only
+#     because each is separately configured for Catppuccin Latte. Anything
+#     else emitting truecolor (npm, dotnet, docker) keeps its own colours and
+#     there is nothing to configure here about it.
+
+# Derive palette 16-255 from the base 16 instead of using the stock xterm cube.
+#
+# NB — UNVERIFIED, deliberately left on with this warning rather than presented
+# as working. `+show-config` still reports `palette = 196=#ff0000` with this
+# enabled, which is either "generation happens at render time, after the config
+# dump" or "it does nothing", and the CLI cannot tell those apart. This is the
+# same trap as the top-of-file note: parsing is not resolving.
+#
+# Check it by eye, then keep or delete this line:
+#   for i in $(seq 16 231); do printf "\033[48;5;${i}m  "; done; printf "\033[0m\n"
+# Stock xterm gives you saturated primaries — pure #ff0000, #00ff00. Generated
+# gives a muted ramp built out of the Latte accents.
+#
+# NB: Ghostty's docs warn that legacy programs hardcode the xterm cube, so if
+# some tool starts rendering oddly in 256-colour mode, this is the first thing
+# to turn off. `palette-harmonious` builds further on this and its own docs say
+# it can make such programs unreadable — not enabled.
+palette-generate = true
+
+# A floor on text/background contrast, as a WCAG ratio.
+#
+# NB: 1.1, NOT the "3 or higher" the docs suggest for general readability. That
+# advice assumes an arbitrary palette; this one is deliberately low-contrast.
+# Measured against this theme's background (#eff1f5), 9 of the 16 palette
+# colours fall below a ratio of 3.0 — br-white 1.61, br-yellow and white 1.91,
+# yellow 2.31, magenta 2.34, br-green 2.48, br-cyan 2.80, green 2.96 — so
+# `minimum-contrast = 3` would have Ghostty REWRITE nine of your sixteen
+# colours toward black and the theme would be gone.
+#
+# At 1.1 nothing in the palette is touched (the lowest is 1.61), so this is a
+# pure safety net: it only rescues output that is genuinely invisible, i.e.
+# some tool printing near-white on near-white. That case is real on a light
+# theme and costs nothing to guard against.
+minimum-contrast = 1.1
+
 # NB: window-theme must be told it is light. On "auto" Ghostty follows the
 # desktop's colour-scheme preference, so a light terminal ends up wearing dark
 # GTK/KDE decorations and the titlebar fights the content.
@@ -129,17 +201,86 @@ window-height = 30
 cursor-style = bar
 cursor-style-blink = true
 
-# ── fluid cursor ─────────────────────────────────────────────────────────────
+# ── cursor trail ─────────────────────────────────────────────────────────────
 # Ghostty 1.3.1 has no built-in cursor animation — `cursor-style-blink` is the
-# whole of it. A smear/trail is done with a custom shader, and Ghostty exposes
-# four uniforms specifically for this (iCurrentCursor, iPreviousCursor,
-# iCurrentCursorColor, iTimeCursorChange). See shaders/cursor-smear.glsl.
+# whole of it. A trail is done with a custom shader, and Ghostty exposes
+# uniforms specifically for this (iCurrentCursor, iPreviousCursor,
+# iCurrentCursorColor, iTimeCursorChange). See shaders/cursor-trail.glsl.
+#
+# A tapered comet behind the cursor, cycling through the Catppuccin Latte accent
+# ramp, on EVERY cursor move — typing, arrow keys and jumps alike. It REPLACES
+# shaders/cursor-smear.glsl (deleted), which drew a uniform-width band.
+#
+# It takes Kitty's `cursor_trail` silhouette and two-speed decay but DEPARTS
+# from it in the one place that matters: Kitty's `cursor_trail_start_threshold`
+# is 2 cells precisely so that typing does not streak, and here it is 0. That
+# is a deliberate choice, not an oversight — and it is the first thing to put
+# back (START_THRESHOLD ≈ 1.0 in the shader) if the effect reads as too busy.
+#
+# NB: a one-cell keystroke only travels one cell, so the tail is anchored PAST
+# where the cursor actually was to give it visible length. The trail therefore
+# does not trace the cursor's real path, by design.
+#
+# NB: the palette is hardcoded from the Catppuccin Latte accents, matching
+# starship.toml — NOT read from `iPalette[256]`, which is only the ANSI 16 plus
+# the colour cube and is duller than the accent ramp. Ghostty is pinned to
+# `theme = Catppuccin Latte` in the theme section ABOVE, so the two cannot drift
+# apart — but change that theme and the trail's colours become wrong.
 #
 # NB: the path is relative to THIS file's directory.
-# NB: a shader that fails to compile surfaces as a startup "Configuration
-# Errors" dialog, not as a silent fallback — so if the terminal opens clean,
-# the shader built. Comment this line out to disable the effect.
-custom-shader = shaders/cursor-smear.glsl
+# NB: a shader that fails to compile is SILENTLY IGNORED — no dialog, no error,
+# nothing in +show-config. See the CORRECTION at the top of this file. Comment
+# a line out to disable that one shader.
+#
+# NB — and this is the part that cost an afternoon: even a shader that loads and
+# runs every frame can draw nothing a human can see. The first version of the
+# trail did exactly that: with `cursor-style = bar` it derived its thickness
+# from min(cursor width, height), which is the BAR's width, so it drew a
+# ONE-PIXEL hairline for about six frames. Full write-up at the top of the
+# shader. Compiling proves less than it looks like it proves.
+#
+# To compile-check a shader edit without launching anything — there is no
+# glslangValidator on this machine, but libshaderc is:
+#   1. prepend Ghostty's own GLSL prelude, which is embedded in the binary:
+#        strings /usr/bin/ghostty | grep -B25 'void main() { mainImage'
+#      NB: the binary ALSO carries a prose doc block describing these uniforms,
+#      and the two DISAGREE — prose says `vec4 iCursorVisible`, the prelude says
+#      `uniform int`. The prelude is the real one. GLSL lets you swizzle a
+#      scalar, so following the prose compiles clean and misbehaves silently.
+#   2. call shaderc_compile_into_spv on prelude+shader via python3 ctypes
+#      against libshaderc_shared.so.1, target env opengl.
+# Sanity-check any such harness with a deliberately broken shader first — an
+# arrangement that reports SUCCESS for everything proves nothing.
+#
+# Trail SPEED and shape are not settings in this file — they are the constants
+# at the top of the shader: START_THRESHOLD (Kitty's cursor_trail_start_
+# threshold), DECAY_FAST / DECAY_SLOW (cursor_trail_decay), DECAY_RANGE,
+# STRENGTH, FADE_START. Editing the shader needs no Ghostty restart;
+# ctrl+shift+r reloads it.
+
+# ORDER MATTERS. `custom-shader` may be repeated, and the shaders run as a
+# CHAIN: each one receives the previous one's output as iChannel0, so this is a
+# pipeline, not a set of independent layers.
+#
+#   1. cursor-row     a faint band on the cursor's row — "where is my prompt"
+#                     after a long agent run. Runs first so the trail draws on
+#                     top of it instead of being washed out by it.
+#   2. cursor-trail   the Catppuccin Latte comet.
+#
+# NB: there was briefly a third, unfocused-dim.glsl, which dimmed the surface
+# when `iFocus == 0`. DELETED, because Ghostty already does it: the built-in
+# `unfocused-split-opacity` defaults to 0.7 and fades unfocused splits with no
+# shader at all. Both fire on the same unfocused surface, so keeping the shader
+# meant DOUBLE-dimming — and paying for an extra full-screen pass to get it.
+# Between that built-in for splits and KWin's titlebar for whole windows, the
+# case was already covered. Turn the dial below instead of writing a shader.
+custom-shader = shaders/cursor-row.glsl
+custom-shader = shaders/cursor-trail.glsl
+
+# How much unfocused SPLITS fade. 1 disables the effect; the floor is 0.15.
+# Ghostty's default is 0.7 — set explicitly here only so the mechanism is
+# discoverable next to the shaders, since that is where it was looked for.
+unfocused-split-opacity = 0.7
 
 # ── scrollback ───────────────────────────────────────────────────────────────
 # NB: this is in BYTES, not lines, despite the name — and Ghostty's default is
@@ -174,14 +315,31 @@ shell-integration-features = cursor,sudo,title
 confirm-close-surface = false
 
 # ── tuned for long-running CLI agents ────────────────────────────────────────
-# Lines per mouse-wheel detent. Ghostty's default is 3; this is deliberately
-# BELOW it because smaller steps read as smoother. Raise it if you find yourself
-# scrolling forever through long agent output — it is a straight trade between
-# "feels smooth" and "covers ground".
-# NB: `precision` is a separate track for touchpads and hi-res wheels, which
-# deliver pixel-precise events and are already smooth. This number only affects
-# discrete wheel clicks.
-mouse-scroll-multiplier = precision:1,discrete:2
+# Scroll speed. Ghostty's default is `precision:1,discrete:3`; both tracks are
+# deliberately BELOW it because smaller steps read as smoother. Raise them if
+# you find yourself scrolling forever through long agent output — it is a
+# straight trade between "feels smooth" and "covers ground".
+#
+#   discrete    lines per mouse-wheel detent. 3 (default) -> 2 -> now 1.
+#   precision   a SEPARATE track for touchpads and hi-res wheels, which deliver
+#               pixel-precise events. Left at 1 until now on the theory that
+#               those are already smooth; halved because "already smooth" is
+#               not the same as "not too fast", and the touchpad is what this
+#               machine actually scrolls with.
+#
+# NB: fractional values are legal on the precision track — verified, since a
+# rejected value here would be silently dropped rather than reported. The check
+# has to isolate the config, because `+show-config` takes only --default,
+# --changes-only and --docs: pass it any other flag and it prints NOTHING at
+# all, which reads exactly like a rejected value. Do it this way instead:
+#
+#   mkdir -p /tmp/gc/ghostty && echo 'mouse-scroll-multiplier = precision:0.25,discrete:1' > /tmp/gc/ghostty/config
+#   XDG_CONFIG_HOME=/tmp/gc ghostty +show-config | grep scroll-multiplier
+#
+# Echoed back = accepted. Absent = invalid (or identical to the default).
+# Confirmed accepted: precision:0.5, 0.25, 0.1. Rejected: precision:bogus.
+# Go to 0.25 if 0.5 is still faster than you want.
+mouse-scroll-multiplier = precision:0.5,discrete:1
 
 # NB: three settings were CHECKED and then deliberately NOT written here,
 # because Ghostty's defaults already do the right thing and restating a default
@@ -195,6 +353,24 @@ mouse-scroll-multiplier = precision:1,discrete:2
 
 # ── keybindings ──────────────────────────────────────────────────────────────
 # Konsole-shaped where it maps cleanly, so the muscle memory survives.
+#
+# NB — TWO THINGS TO KNOW BEFORE EDITING THIS BLOCK.
+#
+# 1. `ctrl+shift+left/right` below OVERRIDE Ghostty defaults, they do not add.
+#    Ghostty 1.3.1 ships ctrl+shift+arrow_left/right as previous_tab/next_tab;
+#    binding them to goto_split REPLACES that, so arrow tab-switching is gone
+#    and tabs are reachable only via ctrl+tab / ctrl+shift+tab / ctrl+page_up /
+#    ctrl+page_down. That is the Konsole shape and it is the intent — but it is
+#    a trade, and Ghostty already ships ctrl+alt+arrow_* for goto_split if you
+#    would rather have the defaults back. Verify any change with
+#    `diff <(ghostty +list-keybinds) <(ghostty +list-keybinds --default)`.
+#
+# 2. Several lines here RESTATE Ghostty 1.3.1 defaults rather than change them:
+#    ctrl+shift+t/n/c/v, ctrl+tab, ctrl+shift+tab, alt+one..four, ctrl+plus and
+#    ctrl+zero all resolve to what Ghostty already does. That sits awkwardly
+#    beside this file's own rule about not restating defaults, and it is kept
+#    deliberately: this block is meant to read as the complete Konsole keymap in
+#    one place. Do not extend the pattern to settings elsewhere in the file.
 keybind = ctrl+shift+t=new_tab
 keybind = ctrl+shift+n=new_window
 keybind = ctrl+shift+w=close_surface

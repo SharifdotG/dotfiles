@@ -29,6 +29,8 @@ on anything that is not Arch-derived; see `docs/MIGRATION.md` for how the machin
 |---|---|
 | `bootstrap.sh` | The only entrypoint. Verifies the distro, installs packages, applies `home/`. |
 | `home/` | chezmoi source tree → `~`. Shell, terminal, editor and CLI config. |
+| `home/.chezmoiscripts/` | Run after the files land: the Plasma theme keys, and the `systemctl --user` reload. |
+| `lib/` | `log.sh`, `detect.sh`, `pkg.sh` — sourced by everything else. Plain awk + TSV, no dependencies. |
 | `packages/*.tsv` | Logical package id → real name per source (`arch`, `aur`). Plain TSV, parsed with awk. |
 | `os/cachyos/prep.sh` | Repo tier, pacman settings and the AUR helper — everything that must be right *before* packages install. |
 | `system/` | The `/etc` drop-ins that keep the machine from freezing. Applied by an explicit `sudo`. |
@@ -41,6 +43,7 @@ on anything that is not Arch-derived; see `docs/MIGRATION.md` for how the machin
 ```bash
 sudo ./system/apply.sh      # /etc drop-ins, and enable the units Arch ships disabled
 sudo usermod -aG docker "$USER"
+sudo usermod -aG kvm "$USER"    # only for Claude Desktop's Cowork tab (QEMU/KVM VM)
 ./scripts/reclaim.sh        # reclaim disk: pacman cache, orphans, coredumps
 ./scripts/secrets-setup.sh  # generate an SSH key, sign in to GitHub
 ./scripts/doctor.sh         # verify
@@ -69,7 +72,7 @@ pattern is worth knowing because it caused real confusion during the migration:
 |---|---|---|
 | `kde-gtk-config` | `~/.config/gtk-{3,4}.0/`, `~/.gtkrc-2.0` | Ignored by chezmoi — deliberately KDE's, see above |
 | btop | its own `btop.conf` on exit | `save_config_on_exit = false` |
-| Plasma | most of `~/.config/*rc` | Not managed here at all; System Settings is the source of truth |
+| Plasma | most of `~/.config/*rc` | No Plasma *file* is managed. A script writes the handful of *keys* we care about (colour scheme, icons, cursor, fonts) with `kwriteconfig6` — the same API System Settings uses — and leaves the rest of each file to Plasma |
 
 ## Secrets
 

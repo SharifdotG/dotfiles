@@ -42,3 +42,49 @@
     args = ["--depth=1"]
 [".oh-my-zsh/custom/plugins/zsh-syntax-highlighting".pull]
     args = ["--ff-only"]
+
+# ── Desktop theming ──────────────────────────────────────────────────────────
+# Both of these are UPSTREAM ARTEFACTS, not configuration, which is why they are
+# fetched rather than vendored: they are large-ish, they are not ours to edit,
+# and committing them would mean hand-merging on every upstream bump.
+
+# Catppuccin Latte Blue colour scheme. ONE file, not the whole catppuccin/kde
+# installer.
+#
+# The installer also ships an Aurorae window decoration, a Plasma style, a
+# look-and-feel package, a splash and its own cursors, and it drives them with
+# kwriteconfig6 + plasma-apply-lookandfeel + an interactive prompt. We want none
+# of that: the decoration stays KDE's own Breeze, and the cursor is WhiteSur
+# below. A .colors file is all that is needed to recolour Plasma, because the
+# scheme's [WM] section is exactly what Breeze reads for the titlebar - so
+# Breeze ends up Catppuccin-coloured while remaining Breeze.
+#
+# Pinned to a tag, not main: this is the file that decides what every window on
+# the machine looks like, and a silent upstream restyle mid-week is not wanted.
+# Bump the tag deliberately.
+[".local/share/color-schemes/CatppuccinLatteBlue.colors"]
+    type = "file"
+    url = "https://github.com/catppuccin/kde/raw/v0.4.0/generated/color-schemes/CatppuccinLatteBlue.colors"
+    refreshPeriod = "168h"
+
+# WhiteSur cursors. Upstream's install.sh is literally `cp -pr dist <dir>`, so
+# an archive external IS the official install - there is nothing to build and no
+# AUR wrapper worth carrying.
+#
+# NB: stripComponents=2 drops "WhiteSur-cursors-master/dist/", landing
+# index.theme + cursors/ + cursors_scalable/ at the top of the target dir. That
+# layout is load-bearing: KDE keys the cursor theme off the DIRECTORY name, not
+# index.theme's Name=, so the theme is "WhiteSur-cursors" (what
+# run_onchange_after_20-kde-theme.sh writes) and not "WhiteSur Cursors".
+#
+# exact=true is safe here (unlike the git-repo externals above, where it would
+# delete .git): nothing but the theme lives in this directory.
+#
+# No tag to pin to - upstream has never cut one - so this tracks master.
+[".local/share/icons/WhiteSur-cursors"]
+    type = "archive"
+    url = "https://github.com/vinceliuice/WhiteSur-cursors/archive/refs/heads/master.tar.gz"
+    exact = true
+    stripComponents = 2
+    include = ["*/dist/**"]
+    refreshPeriod = "168h"

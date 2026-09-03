@@ -30,6 +30,6 @@ cat <<'EOS'
   ~/.npmrc, ~/.nuget/NuGet.Config   registry tokens
   ~/.docker/config.json             registry credentials
   gnome-keyring                     desktop secrets (Secret Service)
-  Firefox profile                   use Firefox Sync
+  Brave profile                     use Brave Sync (a sync chain, not an account)
   Bitwarden vault                   sign in normally
 EOS

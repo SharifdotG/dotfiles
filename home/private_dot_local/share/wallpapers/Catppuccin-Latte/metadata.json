@@ -1,0 +1,13 @@
+{
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "Catppuccin"
+            }
+        ],
+        "Id": "Catppuccin-Latte",
+        "License": "MIT",
+        "Name": "Catppuccin Latte"
+    },
+    "KPackageStructure": "Plasma/Wallpaper"
+}

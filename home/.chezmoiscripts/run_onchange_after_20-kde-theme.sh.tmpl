@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# Apply the desktop look: Catppuccin Latte Blue colours, Fluent icons,
+# WhiteSur cursors, Adwaita Sans / Cascadia Code NF, and the wallpaper.
+#
+# WHY A SCRIPT AND NOT MANAGED FILES
+# Plasma OWNS kdeglobals, kcminputrc, kwinrc and plasma-org.kde.plasma.desktop-
+# appletsrc: System Settings and plasmashell rewrite them on every change, and
+# appletsrc gets rewritten just for moving a widget. Managing them with chezmoi
+# would be the GTK mistake in home/.chezmoiignore all over again - chezmoi and
+# Plasma each clobbering the other, looking like a theming bug. So this writes
+# the handful of KEYS we care about with kwriteconfig6, which is the same API
+# System Settings uses, and leaves the rest of each file to Plasma.
+#
+# run_onchange_: re-runs only when this file's contents change, so it is not
+# fighting the user on every `chezmoi apply`.
+# _after_: the externals (colour scheme, cursors) must already be on disk.
+#
+# Idempotent, and safe with no Plasma running - see the "live session" guard at
+# the bottom. That case is real: bootstrap.sh runs chezmoi from a TTY on a fresh
+# install, before there is a session to talk to.
+#
+# WHY THIS IS A .tmpl - the fix for a defect that made every guard permanent.
+#
+# Four paths below exit 0 without doing the work: no kwriteconfig6, icon theme
+# missing, cursor theme missing, no live session. chezmoi records a
+# run_onchange_ script's content hash on ANY zero exit, so whichever guard fired
+# on the FIRST apply was never retried - the script simply never ran again until
+# somebody hand-edited the hash line. And the first apply is exactly when those
+# guards fire: bootstrap runs paru best-effort (a failed fluent-icon-theme build
+# does not abort), chezmoi runs immediately after, and a TTY bootstrap has no
+# session at all. The guards exist to avoid a half-broken desktop; combined with
+# run_onchange_ they turned a loud failure into a silent permanent one.
+#
+# The state line below fixes that by putting the guards' OWN INPUTS into the
+# content that chezmoi hashes. Install the icons, fetch the cursors, or log into
+# Plasma, and the rendered text changes - so the hash changes, so chezmoi
+# re-runs this by itself. No manual step, and no re-running on every apply.
+#
+# state: icons={{ if stat (joinPath .chezmoi.homeDir ".local/share/icons/Fluent") }}y{{ else if stat "/usr/share/icons/Fluent" }}y{{ else }}n{{ end }}
+#        cursor={{ if stat (joinPath .chezmoi.homeDir ".local/share/icons/WhiteSur-cursors/index.theme") }}y{{ else if stat "/usr/share/icons/WhiteSur-cursors/index.theme" }}y{{ else }}n{{ end }}
+#        kwrite={{ if lookPath "kwriteconfig6" }}y{{ else }}n{{ end }}
+#        session={{ output "sh" "-c" "pgrep -x plasmashell >/dev/null 2>&1 && echo live || echo headless" }}
+
+set -uo pipefail
+
+# hash: 20260904b  (bump to force a re-apply when you change a VALUE below;
+#                   the state line above already covers changes in the
+#                   environment the guards test)
+
+COLORSCHEME="CatppuccinLatteBlue"
+ICONS="Fluent"
+CURSOR="WhiteSur-cursors"
+CURSOR_SIZE=24
+WALLPAPER="${XDG_DATA_HOME:-$HOME/.local/share}/wallpapers/Catppuccin-Latte/contents/images/3840x2160.png"
+
+# Qt6 font spec: Family,size,-1,5,weight,italic,underline,strikeout,fixed,...
+# Plasma 6 uses REAL weights (400 = regular). Plasma 5 used 50 here; a 5-era
+# string is not a parse error, it just silently renders everything semi-bold.
+UI_FONT="Adwaita Sans,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
+UI_FONT_SMALL="Adwaita Sans,9,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
+UI_FONT_BOLD="Adwaita Sans,10,-1,5,700,0,0,0,0,0,0,0,0,0,0,1"
+MONO_FONT="Cascadia Code NF,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
+
+if ! command -v kwriteconfig6 >/dev/null 2>&1; then
+  echo "  kde-theme: no kwriteconfig6 - not a Plasma 6 machine, skipping"
+  exit 0
+fi
+
+echo "  kde-theme: $COLORSCHEME + $ICONS icons + $CURSOR + Adwaita Sans"
+
+# Refuse to point Plasma at a theme that is not on disk.
+#
+# NB: this guard exists because the absence of it caused a real breakage. Icon
+# and cursor themes come from packages (fluent-icon-theme) and externals
+# (WhiteSur), and if the script runs before those land - a first bootstrap, a
+# failed AUR build, an external that 404s - kwriteconfig6 will happily write the
+# name anyway. Plasma then falls back per-icon, which does not look like "theme
+# missing", it looks like a half-broken desktop. Writing nothing is strictly
+# better: the previous, working theme stays.
+#
+# NB: the test is index.theme, NOT the directory. An interrupted external or a
+# half-extracted archive leaves the directory there and empty, which passes -d
+# and gets the name written anyway - the exact outcome this guard exists to
+# prevent. index.theme is what makes a directory a theme.
+theme_installed() {
+  [ -f "/usr/share/icons/$1/index.theme" ] ||
+  [ -f "${XDG_DATA_HOME:-$HOME/.local/share}/icons/$1/index.theme" ]
+}
+
+# ── colours ──────────────────────────────────────────────────────────────────
+# The scheme file arrives via .chezmoiexternal.toml. Setting ColorScheme alone
+# is not enough for a running session (see the live-session block below), but it
+# is what a fresh session reads at login.
+kwriteconfig6 --file kdeglobals --group General --key ColorScheme "$COLORSCHEME"
+
+# ── window decoration: KDE's own Breeze, recoloured by the scheme above ───────
+# Deliberately NOT Catppuccin's Aurorae theme. Breeze reads the colour scheme's
+# [WM] section, so it comes out Catppuccin-coloured while staying Breeze - which
+# also keeps the button layout and the Plasma-native behaviour Aurorae drops.
+kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 --key library "org.kde.breeze"
+kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 --key theme "Breeze"
+
+# ── icons ────────────────────────────────────────────────────────────────────
+if theme_installed "$ICONS"; then
+  kwriteconfig6 --file kdeglobals --group Icons --key Theme "$ICONS"
+else
+  echo "  kde-theme: icon theme '$ICONS' not installed - keeping the current one"
+  echo "             (packages/desktop.tsv: fluent-icon-theme, via paru)"
+  echo "             this re-applies by itself once it is installed"
+fi
+
+# ── cursor ───────────────────────────────────────────────────────────────────
+# kcminputrc is what Plasma reads. XWayland clients are handled by Plasma's own
+# kded, which pushes the cursor theme out to them from this same key - there is
+# nothing for this script to write for them.
+if theme_installed "$CURSOR"; then
+  kwriteconfig6 --file kcminputrc --group Mouse --key cursorTheme "$CURSOR"
+  kwriteconfig6 --file kcminputrc --group Mouse --key cursorSize  "$CURSOR_SIZE"
+else
+  echo "  kde-theme: cursor theme '$CURSOR' not installed - keeping the current one"
+  echo "             (home/.chezmoiexternal.toml fetches it)"
+  echo "             this re-applies by itself once it is on disk"
+fi
+
+# ── fonts ────────────────────────────────────────────────────────────────────
+# These six keys are every font Plasma's Fonts page exposes. Missing one leaves
+# a stray Noto Sans somewhere obvious, usually the panel clock or a toolbar.
+#
+# NB: kdeglobals also has [WM] inactiveFont, which the Fonts page does NOT
+# expose. It is left to Plasma's default deliberately - writing a key System
+# Settings cannot show you back is how you get a setting nobody can find again.
+kwriteconfig6 --file kdeglobals --group General --key font                 "$UI_FONT"
+kwriteconfig6 --file kdeglobals --group General --key menuFont             "$UI_FONT"
+kwriteconfig6 --file kdeglobals --group General --key toolBarFont          "$UI_FONT"
+kwriteconfig6 --file kdeglobals --group General --key smallestReadableFont "$UI_FONT_SMALL"
+kwriteconfig6 --file kdeglobals --group General --key fixed                "$MONO_FONT"
+kwriteconfig6 --file kdeglobals --group WM      --key activeFont           "$UI_FONT_BOLD"
+
+# Match fontconfig's rasterisation so Qt does not second-guess it. See
+# ~/.config/fontconfig/fonts.conf for why hintslight + rgb subpixel.
+kwriteconfig6 --file kdeglobals --group General --key XftAntialias   "true"
+kwriteconfig6 --file kdeglobals --group General --key XftHintStyle   "hintslight"
+kwriteconfig6 --file kdeglobals --group General --key XftSubPixel    "rgb"
+
+# ── live session only ────────────────────────────────────────────────────────
+# Everything above is a config write and works headless. Everything below talks
+# to a RUNNING plasmashell, so it is guarded: on a TTY bootstrap there is no
+# session yet, and the state line at the top of this file flips from
+# session=headless to session=live at the first apply inside a real session,
+# which re-runs this block then.
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] || ! pgrep -x plasmashell >/dev/null 2>&1; then
+  echo "  kde-theme: no live Plasma session - config written; the session-only"
+  echo "             steps re-run automatically at the first apply inside one"
+  exit 0
+fi
+
+# plasma-apply-colorscheme, not just the kdeglobals key: the ColorScheme key is
+# only the NAME. Plasma resolves it into the [Colors:*] blocks in kdeglobals,
+# and until something does that resolution nothing recolours - which is why a
+# running session needs telling and a fresh one does it at login.
+command -v plasma-apply-colorscheme >/dev/null 2>&1 &&
+  plasma-apply-colorscheme "$COLORSCHEME" >/dev/null 2>&1
+
+# Same for the cursor: kcminputrc alone waits for a relog. This was missing, so
+# the script claimed "applied to the running session" while the cursor was the
+# one thing that had not been.
+if theme_installed "$CURSOR"; then
+  command -v plasma-apply-cursortheme >/dev/null 2>&1 &&
+    plasma-apply-cursortheme "$CURSOR" --size "$CURSOR_SIZE" >/dev/null 2>&1
+fi
+
+if [ -f "$WALLPAPER" ]; then
+  # NB: the wallpaper lives in plasma-org.kde.plasma.desktop-appletsrc, which is
+  # the ONE Plasma file that must never be hand-edited - it is per-screen,
+  # per-activity, per-containment, and plasmashell rewrites it constantly.
+  # plasma-apply-wallpaperimage is the supported way in.
+  command -v plasma-apply-wallpaperimage >/dev/null 2>&1 &&
+    plasma-apply-wallpaperimage "$WALLPAPER" >/dev/null 2>&1
+else
+  echo "  kde-theme: wallpaper missing at $WALLPAPER"
+fi
+
+# Make KWin re-read kwinrc so the decoration recolour lands without a relog.
+# qdbus6 comes from qt6-tools, which plasma-workspace depends on, so it is
+# present on any machine that has a Plasma session to talk to.
+command -v qdbus6 >/dev/null 2>&1 &&
+  qdbus6 org.kde.KWin /KWin reconfigure >/dev/null 2>&1
+
+# There is no plasma-apply-icontheme; the Icons/Theme key above is read at
+# login, so an icon theme CHANGE is the one thing here that waits for a relog.
+echo "  kde-theme: applied to the running session (icons take effect at next login)"

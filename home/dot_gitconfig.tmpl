@@ -13,6 +13,14 @@
 	untrackedCache = true
 [feature]
 	manyFiles = true
+[index]
+	# NB: manyFiles implies index.skipHash=true, which writes an index with a
+	# zeroed trailing checksum. Git itself is fine with it; libgit2 is not, and
+	# GitKraken (configured in the VS Code settings, and installed here as
+	# ~/.local/share/GitKrakenCLI) is a libgit2 client - it fails to open the
+	# repo with a checksum error that reads like corruption. Pin it off
+	# explicitly rather than inheriting it from the feature bundle.
+	skipHash = false
 
 [filter "lfs"]
 	clean = git-lfs clean -- %f
@@ -20,5 +28,13 @@
 	process = git-lfs filter-process
 	required = true
 
-[credential "https://internal-git.siderian.cloud"]
+{{/*
+     NB: hasKey, not a bare `.workGitHost`. chezmoi runs templates with
+     missingkey=error, so a chezmoi.toml written before this key existed - i.e.
+     every machine already set up - would abort `chezmoi apply` outright rather
+     than just skipping the section.
+*/ -}}
+{{ if and (hasKey . "workGitHost") (ne (printf "%v" (.workGitHost | default "")) "") -}}
+[credential "https://{{ .workGitHost }}"]
 	provider = generic
+{{ end -}}

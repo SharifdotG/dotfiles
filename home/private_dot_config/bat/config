@@ -15,7 +15,9 @@
 #      either configured theme. A theme setting that quietly does nothing is
 #      exactly the failure mode this repo keeps running into.
 #   2. There is nothing to switch between any more. ghostty is pinned to
-#      `theme = catppuccin-latte`, so the terminal background is a known, fixed,
+#      `theme = Catppuccin Latte` (with a space and capitals - see the NB in
+#      ghostty/config.ghostty; `catppuccin-latte` is a different, wrong value
+#      that silently does nothing), so the terminal background is a known, fixed,
 #      light colour. `auto` was solving a problem that no longer exists.
 #
 # Also: this was the last item of "deferred theming work" and it needed no work

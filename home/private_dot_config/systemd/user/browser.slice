@@ -1,20 +1,27 @@
 # The aggregate memory ceiling for the browser. Nothing runs here yet at boot;
-# the scope drop-in next door is what puts Brave into it.
+# the two drop-ins next door - app-brave\x2dorigin@.service.d/ for the unit
+# Plasma launches, app-org.chromium.Chromium-.scope.d/ for the one Chromium
+# registers itself - are what put Brave into it.
 #
-# WHY A SLICE AT ALL, when app-org.chromium.Chromium-.scope.d/50-memory.conf
-# already carries a MemoryHigh: because cgroup limits are PER-CGROUP, not
-# per-application. Brave does not reliably run as one scope. Measured
-# 2026-09-03 on a normal session: 33 processes in
-# app-org.chromium.Chromium-34947.scope and 2 more in
-# app-org.chromium.Chromium-285773.scope - two live scopes at once, because the
-# scope name is fixed at first launch and a relaunch makes a second one. A
-# per-scope 6G cap on two scopes is a 12G ceiling, which is not a ceiling.
-# A slice caps the SUM, so the number below means what it says no matter how
-# many scopes Chromium decides to create.
+# WHY A SLICE AT ALL, when the two drop-ins next door already carry a
+# MemoryHigh each: because cgroup limits are PER-CGROUP, not per-application,
+# and Brave does not run as one cgroup. Measured 2026-09-04 on a normal
+# session, it runs as two at once:
+#     app-brave\x2dorigin@<hex>.service       35 procs   3.44 GiB
+#     app-org.chromium.Chromium-<PID>.scope     2 procs   0.80 GiB
+# Plasma creates the first from the .desktop; Chromium self-registers the
+# second and moves part of the tree into it. A relaunch can add a third, since
+# the scope name carries the PID. A 6G cap on each of N cgroups is an N x 6G
+# ceiling, which is not a ceiling. A slice caps the SUM, so the number below
+# means what it says however many cgroups Chromium ends up with.
+#
+# NB: both drop-ins must set `Slice=browser.slice` or their cgroup is simply
+# not in here and this file caps nothing. That is exactly the bug fixed on
+# 2026-09-04 - the scope was in the slice, the service (95% of Brave) was not.
 #
 # NB: this is a USER slice (~/.config/systemd/user), not a system one. Brave's
-# scopes live under user@1000.service/app.slice, so the parent has to be in the
-# same manager or it cannot be a parent at all.
+# service and scopes both live under user@1000.service/app.slice, so the parent
+# has to be in the same manager or it cannot be a parent at all.
 [Unit]
 Description=Browser memory ceiling
 

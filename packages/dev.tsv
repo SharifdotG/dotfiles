@@ -4,6 +4,7 @@ python3	python	skip	python3
 python3-pip	python-pip	skip	skip
 nodejs	nodejs	skip	nodejs_22
 npm	npm	skip	skip
+pnpm	pnpm	skip	skip	in extra, so no installer to pipe into sh. NB: do NOT `pnpm self-update` a pacman-installed pnpm - same trap as `sudo npm -g`, it writes over files pacman owns and the next -Syu fights it. Globals still land in $PNPM_HOME/bin (~/.local/share/pnpm/bin), which dot_zshrc puts on PATH
 dotnet-sdk-9	dotnet-sdk-9.0	skip	skip	in extra; the old "-" and "source-built SDK" note were stale
 dotnet-sdk-10	dotnet-sdk-10.0	skip	skip	pinned, not the rolling dotnet-sdk meta
 docker	docker	skip	skip
@@ -12,5 +13,14 @@ containerd	containerd	skip	skip
 docker-buildx	docker-buildx	skip	skip
 docker-compose	docker-compose	skip	skip
 lazydocker	lazydocker	skip	skip	aliased as `lzd` in dot_zshrc; in extra, not the AUR; needs >=0.24.2 - older builds pin Docker API v1.25 and draw empty panels on Docker >=25
-postgresql	postgresql	skip	skip	host client; the guide says run the server in Docker
+postgresql	postgresql	skip	skip	SERVER, not just the client - Arch splits this differently from Fedora and the old note here was a straight carry-over of the Fedora meaning. On Fedora `postgresql` is the client and `postgresql-server` is the daemon; on Arch `postgresql` IS the daemon (70 MB) and it depends on postgresql-libs (11 MB), which is the client + libpq. So there is no postgresql-server to add: this one row already gives you both. Needs initdb before first start - see SETUP-GUIDE Phase 5, and NOT Fedora's postgresql-setup
+# -- editors and AI coding tools --------------------------------------------
 code-insiders	skip	visual-studio-code-insiders-bin	skip	AUR-only, and it is the primary editor
+zed	-	skip	skip	NOT a package on purpose. `zed` IS in extra, but the channel actually run here is PREVIEW, which the repos do not carry (the AUR zed-preview-bin lags and does not self-update). Upstream's installer is the supported path for preview and updates in-app: curl -fsSL https://zed.dev/install.sh | ZED_CHANNEL=preview sh -> ~/.local/zed-preview.app. NB: the variable belongs on the RIGHT of the pipe - prefixing curl scopes it to curl and the installer defaults to stable. bootstrap.sh handles the '-'
+antigravity	skip	antigravity	skip	Google Antigravity 2.0 (the IDE app). NB: three AUR packages claim this name - antigravity-ide is still on the 2.5.x line and antigravity-appimage is a FUSE build; plain `antigravity` is the 2.x package (2.11.0) and the one to keep
+antigravity-cli	skip	antigravity-cli	skip	Antigravity's CLI companion; the binary is `agy`, not `antigravity`
+claude-code	-	skip	skip	NOT the AUR package on purpose. Anthropic's own installer (curl -fsSL https://claude.ai/install.sh | bash) is the supported path on Arch - the docs point non-Debian distros at it - and it SELF-UPDATES into ~/.local/share/claude/versions/<ver> with a ~/.local/bin/claude symlink. The AUR build would pin a version paru has to chase. bootstrap.sh handles the '-'
+codex-cli	openai-codex	skip	skip	OpenAI Codex CLI. In extra, so do NOT switch this to the AUR openai-codex-bin
+pencil-dev	skip	pencil-dev-appimage	skip	pencil.dev, the design-on-canvas -> code tool. Two AUR packages wrap the same official download: pencil-dev-bin (tarball) pins 1.1.56 against an UNVERSIONED url, so its sha256 no longer matches what pencil.dev serves and it fails to build. pencil-dev-appimage is current (1.2.0) AND installs the bundled MCP server to a STABLE /opt path - the AppImage's own copy lives under /tmp/.mount_Pen-XXXXXX, which is a fresh mount every launch and is why the `pencil` MCP server in ~/.claude.json dies with ENOENT. Caveat: its launcher runs the Electron app --no-sandbox
+lens	skip	lens-bin	skip	Lens Desktop, the Kubernetes IDE - matches the /opt/Lens you already run. NB: Lens is commercial now; it requires a sign-in and the free tier is personal-use/below a revenue threshold. If that ever bites, freelens-bin is the actively maintained free fork (NOT openlens-bin, which is stuck on 6.5.2)
+mint	-	skip	skip	Mintlify CLI (`npm i -g mint`). No package exists in any repo or the AUR, which is the ORIGINAL meaning of "-" - unlike zed and claude-code above, this one does not self-update, npm does it. Installs into ~/.npm-global, which dot_zshrc puts on PATH via NPM_CONFIG_PREFIX; never `sudo npm -g`, that writes into pacman's /usr/lib/node_modules

@@ -21,12 +21,12 @@ ghostty	ghostty	skip	skip	the primary terminal; Konsole ships with the edition a
 dolphin	dolphin	skip	skip
 okular	okular	skip	skip
 gwenview	gwenview	skip	skip
-ark	ark	skip	skip	p7zip/unrar in core.tsv are the backends
+ark	ark	skip	skip	7zip/unrar in core.tsv are the backends
 spectacle	spectacle	skip	skip
 kde-gtk-config	kde-gtk-config	skip	skip	themes GTK apps from the Plasma colour scheme - see home/.chezmoiignore
 # -- fonts ------------------------------------------------------------------
 cascadia-code-nf	ttf-cascadia-code-nerd	skip	skip	family string is "Cascadia Code NF"; replaced Maple Mono, whose AUR package failed to install in the VM
-inter-font	inter-font	skip	skip
+adwaita-fonts	adwaita-fonts	skip	skip	ships BOTH "Adwaita Sans" (the system UI font here) and "Adwaita Mono"; only Sans is used - monospace is Cascadia Code NF. Family strings are what ~/.config/fontconfig/fonts.conf matches on, so they are load-bearing
 noto-fonts	noto-fonts	skip	skip
 noto-fonts-emoji	noto-fonts-emoji	skip	skip
 noto-fonts-cjk	noto-fonts-cjk	skip	skip
@@ -36,6 +36,17 @@ telegram-desktop	telegram-desktop	skip	skip
 vesktop	skip	vesktop-bin	skip	the -bin: building vesktop from source is a 30-60min Electron build on 4C/8T
 libreoffice	libreoffice-fresh	skip	skip
 mpv	mpv	skip	skip
+# -- AI desktop apps --------------------------------------------------------
+# The CLIs and IDEs that pair with these (claude-code, codex-cli, zed,
+# antigravity + antigravity-cli) live in packages/dev.tsv.
+claude-desktop	skip	claude-desktop	skip	Anthropic's OFFICIAL Linux build (Chat + Cowork + Claude Code), in beta since 2026-06-30. Official support is Debian/Ubuntu ONLY, via Anthropic's apt repo - the docs tell Arch and Fedora users to run the CLI instead. So this AUR package is the path: it downloads the official .deb from downloads.claude.ai and repackages its payload, plus symlink shims for the Debian paths Cowork hardcodes (virtiofsd, OVMF). Not a third-party rebuild. The qemu-system-x86 + edk2-ovmf + virtiofsd deps are Cowork's VM sandbox and are parity with the .deb's Recommends, which apt installs by default - NOT AUR bloat. See SETUP-GUIDE Phase 5 for the KVM prerequisites, and Phase 4 for the memory tension with the Docker Desktop argument
+chatgpt-desktop	skip	chatgpt-desktop	skip	OpenAI's official Linux binary, repackaged; provides/conflicts `chatgpt`
+# -- desktop theming --------------------------------------------------------
+# The rest of the look is NOT packaged: the Catppuccin Latte Blue colour scheme
+# and the WhiteSur cursors arrive via home/.chezmoiexternal.toml, and
+# home/.chezmoiscripts/run_onchange_after_20-kde-theme.sh wires all of it into
+# Plasma. Window decoration stays KDE's own Breeze, recoloured by the scheme.
+fluent-icon-theme	skip	fluent-icon-theme	skip	vinceliuice's Fluent icons. The AUR package IS the official install - its PKGBUILD runs upstream's own install.sh --all against a pinned release tag, which is exactly what you would run by hand, minus the untracked files in ~/.local/share/icons. Prefer it over fluent-icon-theme-git: -git rebuilds on every push
 # -- hardware ---------------------------------------------------------------
 intel-media-driver	intel-media-driver	skip	skip	VA-API for UHD 620; LIBVA_DRIVER_NAME=iHD is set in environment.d
 libva-utils	libva-utils	skip	skip	provides `vainfo`

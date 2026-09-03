@@ -18,7 +18,10 @@ for a in "$@"; do case "$a" in
   --no-packages) NO_PKGS=1 ;;
   --no-desktop)  NO_DESKTOP=1 ;;
   --force)       FORCE=1 ;;
-  -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+  # NB: derived, not a hardcoded line range. This was `sed -n '2,12p'`, which
+  # printed five lines of shell (set -uo pipefail, the cd, the sources) once the
+  # header comment got shorter than the range. Stop at the first non-comment.
+  -h|--help) awk 'NR>1 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "$0"; exit 0 ;;
   *) die "unknown flag: $a" ;;
 esac; done
 
@@ -119,10 +122,58 @@ if [ "$NO_PKGS" -eq 0 ]; then
     fi
   fi
 
-  # Anything a manifest marks "-" has no package anywhere and needs a special
-  # path. Nothing uses this today; the loop stays as the seam for future rows.
+  # Manifest rows marked "-" have no package and install themselves from
+  # upstream. This used to be a bare warn(); it is a real dispatch now.
+  #
+  # Two different reasons a row lands here, and they are worth telling apart:
+  #   zed, claude-code - a package EXISTS (or could) but the vendor installer
+  #     SELF-UPDATES in place, so pacman would only ever chase a version the
+  #     app has already replaced underneath it.
+  #   mint - no package exists anywhere, in any repo or the AUR. This is what
+  #     "-" originally meant.
+  # Either way they install ONCE; the guards below are what make re-running
+  # bootstrap.sh a no-op rather than a reinstall that stomps a self-update.
   for u in $(pkg_unavailable arch "${MANIFESTS[@]}"); do
-    warn "no package for '$u' - install it manually"
+    case "$u" in
+      zed)
+        # Preview channel, deliberately - see packages/dev.tsv. The stable
+        # `zed` in extra is a DIFFERENT app with its own config dir; installing
+        # both is a supported but separate decision.
+        if [ -x "$HOME/.local/zed-preview.app/bin/zed" ]; then
+          ok "zed (preview) present - it self-updates, leaving it alone"
+        else
+          info "zed (preview) from zed.dev"
+          # NB: -fsSL, matching the claude-code line below. Bare -f leaves the
+          # progress meter in the bootstrap log and, without -L, a future
+          # redirect would pipe an empty body straight into sh.
+          # NB: ZED_CHANNEL goes on the RIGHT of the pipe. Prefixing curl scopes
+          # it to curl, and the installer reads it in the sh on the other side,
+          # so the wrong form silently installs stable.
+          run sh -c 'curl -fsSL https://zed.dev/install.sh | ZED_CHANNEL=preview sh'
+        fi ;;
+      claude-code)
+        if command -v claude >/dev/null 2>&1; then
+          ok "claude code present - it self-updates, leaving it alone"
+        else
+          info "claude code from claude.ai/install.sh"
+          run sh -c 'curl -fsSL https://claude.ai/install.sh | bash'
+        fi ;;
+      mint)
+        # npm, not pacman - and deliberately NOT `sudo npm -g`, which writes
+        # into /usr/lib/node_modules, a directory pacman owns and will fight
+        # over on the next nodejs upgrade. NPM_CONFIG_PREFIX (set in dot_zshrc)
+        # keeps it in ~/.npm-global; it is passed explicitly here because
+        # bootstrap can run before that zshrc is ever sourced.
+        if command -v mint >/dev/null 2>&1; then
+          ok "mint present - upgrade with 'npm i -g mint@latest'"
+        elif command -v npm >/dev/null 2>&1; then
+          info "mint (Mintlify CLI) from npm"
+          run env NPM_CONFIG_PREFIX="$HOME/.npm-global" npm install -g mint
+        else
+          warn "npm missing - cannot install mint"
+        fi ;;
+      *) warn "no package for '$u' - install it manually" ;;
+    esac
   done
 fi
 
@@ -158,8 +209,11 @@ step "remaining manual steps"
 cat <<'EOS'
   sudo ./system/apply.sh      /etc drop-ins + enable the units Arch ships disabled
   sudo usermod -aG docker "$USER"   then log out and back in
+  sudo usermod -aG kvm "$USER"      only if you want Claude Desktop's Cowork tab;
+                                    it runs its sandbox in a QEMU/KVM VM. Also needs
+                                    virtualization enabled in the BIOS. Chat and
+                                    Claude Code work without it.
   ./scripts/reclaim.sh        reclaim disk: pacman cache, orphans, coredumps
-  ./scripts/firefox-tune.sh   install firefox/user.js into every profile
   ./scripts/secrets-setup.sh  generate an SSH key and sign in to GitHub
   ./scripts/doctor.sh         verify everything
 EOS

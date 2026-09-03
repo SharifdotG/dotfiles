@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Make the systemd USER manager pick up the unit files chezmoi just wrote.
+#
+# WHY THIS EXISTS. home/private_dot_config/systemd/user/ ships browser.slice and
+# two drop-ins, and their own comments say "`systemctl --user daemon-reload`
+# applies both without a restart". Nothing in the repo ever ran it: bootstrap.sh
+# ends at `chezmoi apply`, and system/apply.sh's daemon-reload runs as root and
+# reloads the SYSTEM manager, which is a different manager entirely. So on a
+# fresh bootstrap the files landed on disk and sat inert until the next login -
+# which is a long time to run a 16 GB laptop with no browser ceiling.
+#
+# run_onchange_ keyed on the unit files themselves, not on this script: the
+# hashes below change whenever a unit changes, which is exactly when a reload is
+# needed. Editing a MemoryHigh therefore re-runs this by itself.
+#
+# units: {{ include "private_dot_config/systemd/user/browser.slice" | sha256sum }}
+#        {{ include `private_dot_config/systemd/user/app-brave\x2dorigin@.service.d/50-memory.conf` | sha256sum }}
+#        {{ include "private_dot_config/systemd/user/app-org.chromium.Chromium-.scope.d/50-memory.conf" | sha256sum }}
+#
+# _after_: the unit files have to be on disk before the manager is told to look.
+
+set -uo pipefail
+
+# No user manager to talk to on a TTY bootstrap - the units are already on disk
+# and the manager reads them at the next login, so this is a clean no-op.
+if [ -z "${XDG_RUNTIME_DIR:-}" ] || [ ! -S "${XDG_RUNTIME_DIR:-}/bus" ]; then
+  echo "  user-units: no systemd user session - units take effect at next login"
+  exit 0
+fi
+
+systemctl --user daemon-reload || {
+  echo "  user-units: daemon-reload failed - units take effect at next login"
+  exit 0
+}
+echo "  user-units: systemd --user reloaded"
+
+# MemoryHigh reaches an already-running Brave immediately; Slice= does not,
+# because a live cgroup cannot be re-parented. Say so rather than letting the
+# next `doctor.sh` run look like a regression.
+if pgrep -f '/opt/brave.com/brave-origin' >/dev/null 2>&1 &&
+   ! systemctl --user show 'browser.slice' -p ActiveState --value 2>/dev/null |
+     grep -q active; then
+  echo "  user-units: Brave is running - restart it so Slice= binds"
+fi

@@ -70,14 +70,24 @@ note "orphan packages" "$(pacman -Qtdq 2>/dev/null | wc -l)"
 note "/etc .pacnew files" "$(find /etc -name '*.pacnew' 2>/dev/null | wc -l)"
 
 step "Shell + CLI config"
-chk "fd on PATH"                 ok  "$(zsh -ic 'fd --version' 2>/dev/null | grep -q '^fd ' && echo ok || echo broken)"
+# ONE interactive zsh for this whole section, not one per check. `zsh -ic` is
+# not cheap - it sources OMZ, four plugins and compinit - and this used to spawn
+# a second one just to time the first. Time the startup once and reuse that same
+# shell to answer everything that needs a real interactive environment.
+_zsh_start=$( { TIMEFORMAT=%R; time zsh -ic 'fd --version >/dev/null 2>&1 && echo FD_OK' ; } 2>&1 )
+chk "fd on PATH"                 ok  "$(case "$_zsh_start" in *FD_OK*) echo ok;; *) echo broken;; esac)"
 chk "starship palette active"    yes "$(grep -q '^palette' ~/.config/starship.toml 2>/dev/null && echo yes || echo no)"
 chk "ZSH_THEME empty"            yes "$(grep -q '^ZSH_THEME=""' ~/.zshrc 2>/dev/null && echo yes || echo no)"
 chk "bat config exists"          yes "$([ -f ~/.config/bat/config ] && echo yes || echo no)"
+# NB: PATH must not grow on re-source. dot_zshrc prepends through path_prepend()
+# for exactly this reason; a duplicate here means a bare `export PATH=` crept
+# back in.
+chk "no duplicate PATH entries"  ok  "$(zsh -ic 'print -r -- $PATH' 2>/dev/null |
+    tr ':' '\n' | sort | uniq -d | grep -q . && echo "duplicates" || echo ok)"
 # Report load and CPU clock alongside: startup time swings 5x between an idle
 # machine (~0.09s) and load>6 with the CPU parked at 800 MHz (~0.45s). Without
 # this context the number looks like a regression when it isn't.
-note "zsh startup" "$( { TIMEFORMAT=%R; time zsh -ic exit; } 2>&1 | tail -1 )s"
+note "zsh startup" "$(echo "$_zsh_start" | tail -1)s"
 note "  load avg / CPU MHz" "$(cut -d' ' -f1-3 /proc/loadavg) / $(awk '/cpu MHz/{s+=$4;n++} END{printf "%.0f", s/n}' /proc/cpuinfo)"
 
 step "Desktop session"
@@ -118,64 +128,80 @@ note "extensions on disk" "$(du -sh ~/.vscode-insiders/extensions 2>/dev/null | 
 
 step "Browser (Brave Origin)"
 chk "brave-origin installed"     yes "$(command -v brave-origin >/dev/null && echo yes || echo no)"
-_bvpids=$(pgrep -f '/opt/brave.com/brave-origin' 2>/dev/null)
+_bvpids=$(pgrep -f '/opt/brave\.com/brave-origin' 2>/dev/null)
 if [ -z "$_bvpids" ]; then
   note "brave" "not running"
 else
-  note "processes" "$(echo "$_bvpids" | wc -l)"
+  # NB: CORRECTION, 2026-09-04, and the most important line in this section.
+  # This used to enumerate Brave's cgroups and then filter them with
+  # `grep '\.scope$'`. Brave does not run only as scopes. Plasma launches it as
+  # app-brave\x2dorigin@<hex>.SERVICE, and 35 of its 37 processes stay there -
+  # GPU, all three zygotes, the utility processes, crashpad and every renderer.
+  # The filter dropped that cgroup, so "cap on every brave scope" reported ok
+  # against the single 2-process scope that WAS capped, while 3.4 GiB of Brave
+  # sat uncapped in app.slice. A green light on the exact check that was added
+  # to prove the cap works.
+  #
+  # So: never filter this list by unit type. Whatever cgroup Brave's processes
+  # are in is a cgroup that needs a ceiling, whether it is a scope, a service,
+  # or something Chromium invents next.
+  _bvcg=$(for p in $_bvpids; do cut -d: -f3 "/proc/$p/cgroup" 2>/dev/null; done | sort -u)
+  # Widen from "processes whose argv matches the binary path" to "every process
+  # in the cgroups those live in". That is what the caps actually apply to, and
+  # it picks up the /usr/bin/brave-origin-stable wrapper shell that the path
+  # match misses. Deriving it from the cgroups rather than a looser pgrep also
+  # avoids matching an unrelated shell that merely mentions "brave-origin".
+  _bvpids=$(for c in $_bvcg; do cat "/sys/fs/cgroup$c/cgroup.procs" 2>/dev/null; done |
+      sort -un)
+  note "processes" "$(echo "$_bvpids" | grep -c .)"
+  note "cgroups in use" "$(for c in $_bvcg; do echo "${c##*/}"; done | tr '\n' ' ')"
   # NB: PSS, never RSS. RSS counts every shared page in full against every
   # process mapping it, so a 30-process Chromium double-counts its shared
   # runtime ~30 times. PSS divides each shared page by its sharer count.
   note "brave total (PSS)" "$(for p in $_bvpids; do
       awk '/^Pss:/{print $2}' "/proc/$p/smaps_rollup" 2>/dev/null; done |
       awk '{s+=$1} END {printf "%.2f GiB", s/1048576}')"
-  # NB: CORRECTION, 2026-09-03. This script used to say Chromium could not be
-  # capped, because "a template drop-in cannot target a PID-suffixed scope
-  # name". That sentence is true and it is beside the point. Templating is not
-  # the only way to reach a family of unit names: systemd's DASH-TRUNCATION
-  # drop-in search is a separate feature, and under it
-  # app-org.chromium.Chromium-<PID>.scope reads
-  # app-org.chromium.Chromium-.scope.d/ whatever the PID. That is where the cap
-  # lives now - see home/private_dot_config/systemd/user/ for both files and the
-  # full derivation. The old "if Brave ever needs a ceiling, the mechanism is a
-  # SLICE" note is also settled: it is a slice AND the drop-in, because the
-  # drop-in is what puts Brave into the slice.
+  # HOW BRAVE IS CAPPED, since the mechanism is not obvious:
+  #   app-brave\x2dorigin@<hex>.service is a TEMPLATE instance, so the drop-in
+  #     dir app-brave\x2dorigin@.service.d/ reaches it whatever the hex is.
+  #   app-org.chromium.Chromium-<PID>.scope is not a template, but systemd's
+  #     DASH-TRUNCATION drop-in search is a separate feature and reaches it:
+  #     systemd.unit(5) - "for a unit name foo-bar-baz.service not only the
+  #     regular drop-in directory foo-bar-baz.service.d/ is searched but also
+  #     both foo-bar-.service.d/ and foo-.service.d/".
+  # Both drop-ins live in home/private_dot_config/systemd/user/ with the full
+  # derivation. Both set Slice=browser.slice, which is what makes the slice a
+  # real aggregate ceiling rather than N separate 6G ceilings.
   #
   # Two separate checks, because they fail independently and for different
   # reasons:
   #   MemoryHigh reaches an ALREADY-RUNNING Brave on daemon-reload.
-  #   Slice= binds only scopes created AFTER the drop-in landed, because a live
+  #   Slice= binds only cgroups created AFTER the drop-in landed, because a live
   #   cgroup cannot be re-parented. So a Brave that was already running when
   #   this was installed passes the first and fails the second until it is
-  #   restarted - expected, and exactly why the per-scope MemoryHigh exists
+  #   restarted - expected, and exactly why the per-cgroup MemoryHigh exists
   #   instead of relying on the slice alone.
-  _bvscopes=$(for p in $_bvpids; do cut -d: -f3 "/proc/$p/cgroup" 2>/dev/null; done |
-      sed 's|.*/||' | grep '\.scope$' | sort -u)
-  chk "cap on every brave scope"   ok "$(
+  chk "cap on every brave cgroup"  ok "$(
       _bad=0; _n=0
-      for s in $_bvscopes; do
+      for c in $_bvcg; do
         _n=$((_n+1))
-        [ "$(systemctl --user show "$s" -p MemoryHigh --value 2>/dev/null)" = 6442450944 ] ||
+        [ "$(systemctl --user show "${c##*/}" -p MemoryHigh --value 2>/dev/null)" = 6442450944 ] ||
           _bad=$((_bad+1))
       done
-      if   [ "$_n"   -eq 0 ]; then echo "no scopes found"
+      if   [ "$_n"   -eq 0 ]; then echo "no cgroups found"
       elif [ "$_bad" -eq 0 ]; then echo ok
       else echo "$_bad/$_n uncapped"; fi)"
   chk "browser.slice ceiling"      6442450944 \
       "$(systemctl --user show browser.slice -p MemoryHigh --value 2>/dev/null)"
   # Not a chk: fails benignly until the next Brave restart, see the NB above.
-  note "scopes actually in the slice" "$(
+  note "cgroups in the slice" "$(
       _in=0; _n=0
-      for s in $_bvscopes; do
+      for c in $_bvcg; do
         _n=$((_n+1))
-        case "$(systemctl --user show "$s" -p ControlGroup --value 2>/dev/null)" in
-          */browser.slice/*) _in=$((_in+1));;
-        esac
+        case "$c" in */browser.slice/*) _in=$((_in+1));; esac
       done
       if [ "$_n" -gt 0 ] && [ "$_in" -eq "$_n" ]; then echo "$_in/$_n"
       else echo "$_in/$_n (restart brave to re-parent the rest)"; fi)"
-  note "cgroups in use" "$(for p in $_bvpids; do cut -d: -f3 "/proc/$p/cgroup" 2>/dev/null; done |
-      sed 's|.*/||' | sort -u | tr '\n' ' ')"
 fi
 
 step "Rollback safety"
