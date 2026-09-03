@@ -16,7 +16,7 @@ detect_all() {
   # yields "none" in exactly the two places that matter most: system/apply.sh
   # (runs as root) and a first bootstrap from a console. Fall back to asking the
   # process table, which does not care about the environment.
-  [ "$DESKTOP" = none ] && pgrep -x niri >/dev/null 2>&1 && DESKTOP=niri
+  [ "$DESKTOP" = none ] && pgrep -x plasmashell >/dev/null 2>&1 && DESKTOP=plasma
   SESSION_TYPE="${XDG_SESSION_TYPE:-tty}"
   IS_VM=no; command -v systemd-detect-virt >/dev/null 2>&1 &&
     [ "$(systemd-detect-virt)" != none ] && IS_VM=yes

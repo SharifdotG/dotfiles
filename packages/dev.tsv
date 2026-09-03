@@ -11,6 +11,6 @@ docker-cli	docker	skip	skip
 containerd	containerd	skip	skip
 docker-buildx	docker-buildx	skip	skip
 docker-compose	docker-compose	skip	skip
-lazydocker	lazydocker	skip	skip	aliased as `lzd` in dot_zshrc; in extra, not the AUR
+lazydocker	lazydocker	skip	skip	aliased as `lzd` in dot_zshrc; in extra, not the AUR; needs >=0.24.2 - older builds pin Docker API v1.25 and draw empty panels on Docker >=25
 postgresql	postgresql	skip	skip	host client; the guide says run the server in Docker
 code-insiders	skip	visual-studio-code-insiders-bin	skip	AUR-only, and it is the primary editor

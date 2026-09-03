@@ -58,6 +58,7 @@ install_file systemd/coredump.conf.d/99-size-cap.conf     /etc/systemd/coredump.
 info "Docker daemon (log caps + builder GC)"
 install_file docker/daemon.json                           /etc/docker/daemon.json
 
+
 [ "$DRY" -eq 1 ] && { info "dry run - nothing written"; exit 0; }
 
 info "Reloading"
@@ -75,6 +76,7 @@ for u in systemd-oomd.service earlyoom.service fstrim.timer thermald.service \
   enable_unit "$u"
 done
 command -v paccache >/dev/null && enable_unit paccache.timer
+
 
 info "zram"
 # NB: the zram device comes from a GENERATOR, so daemon-reload re-reads

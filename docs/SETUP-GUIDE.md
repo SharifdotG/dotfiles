@@ -1,5 +1,5 @@
 # 🌟 The T490s Low-RAM Setup Guide 🔥
-### CachyOS · niri · Noctalia v5
+### CachyOS · KDE Plasma
 
 **Target machine:** Lenovo ThinkPad T490s — Intel i5-8365U (4C/8T, Whiskey Lake), 16 GB RAM
 (15.3 GiB usable), Intel UHD 620
@@ -7,31 +7,40 @@
 **ISA level:** **x86-64-v3** — no AVX-512. This decides which CachyOS repos you may enable;
 see Phase 1.
 **Displays:** `eDP-1` 1920×1080 @ scale 1.25 · `HDMI-A-2` 1920×1080 @ scale 1.0
-**Target OS:** CachyOS (Arch) · niri (scrollable-tiling Wayland compositor) · Noctalia v5 shell
+**Target OS:** CachyOS (Arch) · KDE Plasma 6, Wayland
 **Workload:** Docker, Angular/Nx monorepos, microservices, nopCommerce (.NET + SQL Server)
 **Curated by SharifdotG · Revised for low-RAM stability**
 
-> **Coming from the Fedora KDE version of this guide?** The one-time move is
-> `docs/MIGRATION.md`, which is a runbook rather than a reference. This file is what you
-> read afterwards, and every time something breaks.
+> **The one thing to take from this guide, stated up front.** Measured on this machine, the
+> entire Plasma session — compositor, shell, panel, every KDE daemon — costs **0.58 GiB**.
+> Firefox alone costs **8.13 GiB**. The desktop environment is not where your memory goes,
+> and no amount of switching between them will change that. Phase 4 is where the gigabytes
+> are.
+>
+> This is not theoretical. A previous revision of this guide targeted a minimal
+> scrollable-tiling compositor specifically to save RAM, on the strength of a claim that
+> Plasma idled at 1.2–1.5 GB. That figure was an internet number, never a measurement, and
+> it was **~2.4× too high**. The whole detour was chasing a few hundred megabytes against a
+> browser costing eight gigabytes. Plasma came back.
+
+> **Coming from Fedora KDE?** The one-time move is `docs/MIGRATION.md`, which is a runbook
+> rather than a reference. This file is what you read afterwards, and every time something
+> breaks.
 
 ---
 
 ## 📋 What changed, and why
 
-Only the decisions worth carrying forward. This table is deliberately short — the previous
-version grew to eighteen rows of GNOME-to-KDE trivia and aged badly.
-
 | Was | Is | Why |
 |---|---|---|
 | Fedora 44 / `dnf` | CachyOS / `pacman` + `paru` | Rolling, and the v3-optimised repos match this CPU |
-| KDE Plasma 6.7 | niri + Noctalia v5 | Measured: the whole Plasma session was 0.58 GiB, so this is worth a few hundred MB, not gigabytes. See the budget table |
+| KDE Plasma 6.7 | **KDE Plasma 6, unchanged** | It was never the problem. See the note above |
 | Konsole | Ghostty | Already installed and managed; now actually themed, which is why it was not being used before |
-| Dolphin / Okular / Gwenview / Ark / Spectacle / KCalc | Thunar + yazi / zathura / imv / file-roller / **niri built-in** / **Noctalia built-in** | Two of them needed no package at all |
 | Secure Boot **enabled** | **disabled** in firmware | `linux-cachyos` is not MS-signed, and fwupd never needed Secure Boot |
 | `starship` and `chezmoi` via upstream installers | real repo packages | The `-` sentinel in `packages/core.tsv` is gone |
-| GTK themed for free by `kde-gtk-config` | Noctalia owns colour, chezmoi owns settings | The one rule in this guide that **inverted**. See Phase 7 |
+| `/etc/default/earlyoom` | an `ExecStart=` drop-in | On Arch the vendor file wins over `Environment=`. See Layer 2b |
 | RPM Fusion for codecs | nothing to do | Arch's `ffmpeg` is unencumbered |
+| — | `.pacnew` handling, `paccache`, orphan pruning | Maintenance responsibilities Fedora never imposed. See Phase 8 |
 
 ---
 
@@ -135,7 +144,7 @@ sudo pacman -S --needed intel-media-driver libva-utils
 vainfo | head -20   # should list VAProfileH264 / VAProfileHEVC entries
 ```
 
-Firefox picks this up automatically on Wayland. Verify later at **`about:support` → Graphics** → `HARDWARE_VIDEO_DECODING: available`.
+Verify later at **`brave://gpu`** — look for *Video Decode: Hardware accelerated* rather than software.
 
 ### ⚡ Firmware Updates
 
@@ -152,50 +161,43 @@ sudo reboot
 
 **Do not run TLP and `power-profiles-daemon` together** — they fight over the same knobs.
 
-The old advice here was "install ppd, Plasma integrates with it" — and that premise is gone: there is no battery applet wired to it any more. So this is now a real choice. `power-profiles-daemon` is the right pick **if** Noctalia's bar exposes a profile switcher (check its power widget); otherwise `tlp` is fire-and-forget and needs no desktop integration at all. Either one, plus the S3 BIOS setting from Phase 0, is enough.
+**Do not install TLP.** Plasma integrates with `power-profiles-daemon` directly — the battery icon offers Power Save / Balanced / Performance — and running both causes conflicting settings. `power-profiles-daemon` plus the S3 BIOS setting from Phase 0 is enough.
 
 Optional diagnostics only: `sudo pacman -S powertop` — run `sudo powertop` to *look* at power draw. Don't run `--auto-tune` on a ThinkPad; it aggressively suspends USB ports and will make your mouse and dock flaky.
 
 ---
 
-## 🧩 Phase 3: Session components
+## 🖥 Phase 3: Desktop
 
-A bare niri session is missing a set of things Plasma provided invisibly. Each one fails
-**silently and confusingly** when absent, which is why they get a phase of their own rather
-than a bullet list — the symptom rarely points at the cause.
+The CachyOS KDE edition installs the workspace, the display manager, Breeze, the portal and
+the core KDE apps at install time. There is nothing to assemble.
 
-| Missing piece | What it looks like when absent |
-|---|---|
-| polkit agent | Every GUI action needing a password does *nothing at all*. No dialog, no error, no log line. |
-| Notification daemon | `notify-send` fails — which silently disables `earlyoom -n`, so **OOM kills become invisible**. Load-bearing for Phase 4. |
-| Screen locker + idle daemon | Closing the lid leaves the session unlocked. |
-| Clipboard manager | Copy from a window, close the window, clipboard is empty. Wayland has no clipboard owner after the source exits. |
-| XDG portals | File pickers in Firefox and VS Code fall back to broken or absent; screen sharing in Teams/Meet does not work. |
-| Qt platform theme | Every remaining Qt app renders in default Fusion regardless of your theme. |
-| Network / Bluetooth applet | `nmcli` and `bluetoothctl` only. |
-| Output configuration | No display-arrangement UI at all — it is `outputs.kdl` or nothing. |
+That sentence is doing more work than it looks. A bare compositor needs you to supply, and
+keep working, a polkit agent, a notification daemon, a screen locker, an idle daemon, a
+clipboard manager, a wallpaper setter, an output-configuration tool, portal backends and a
+Qt platform theme — and **every one of them fails silently when absent**. No polkit agent
+means password dialogs simply never appear. No notification daemon means `earlyoom -n` has
+nowhere to report, so OOM kills become invisible, which quietly undermines Phase 4. Plasma
+ships all of it, wired together, for the 0.58 GiB measured above.
 
-**Noctalia v5 covers more of this than you might expect**, which is the main reason it is
-worth running rather than assembling a shell from parts. It provides the bar, the launcher,
-the notification daemon, the lock screen, the clipboard history, the OSD for volume and
-brightness, the network and Bluetooth widgets, **and** a calculator in the launcher (it links
-`libqalculate`, which is why KCalc needed no replacement package).
+### What to verify
 
-What Noctalia does *not* provide, and `packages/desktop.tsv` therefore installs:
+| Check | Command | Expected |
+|---|---|---|
+| Wayland session | `echo $XDG_SESSION_TYPE` | `wayland` |
+| Per-output scaling | System Settings → Display | `eDP-1` at 125%, `HDMI-A-2` at 100% |
+| VA-API | `vainfo \| head -20` | `iHD` driver, H.264/HEVC profiles listed |
+| GTK apps themed | open any GTK app | Breeze colours, not default Adwaita |
 
-- `polkit-gnome` — the authentication agent
-- `xdg-desktop-portal`, `-gnome` and `-gtk` — see Phase 7 for which backend serves what
-- `gnome-keyring` — the Secret Service provider, replacing kwallet
-- `xwayland-satellite` — X11 clients. niri auto-spawns it and sets `DISPLAY` when present
-- `qt6ct` — Qt theming
-- `brightnessctl`, `playerctl`, `wl-clipboard` — the plumbing the binds call into
-- `grim`, `slurp` — only for *scripted* screenshots; interactive ones are built into niri
+> **NB — `LIBVA_DRIVER_NAME=iHD` is set in `~/.config/environment.d/50-wayland.conf`.**
+> Nothing in this repo set it before, despite `packages/desktop.tsv` carrying
+> `intel-media-driver` "for VA-API on UHD 620" since it was written. Having the driver
+> installed is not the same as having it selected. It needs a re-login to take effect.
 
-> **NB — the notification daemon is not cosmetic.** `earlyoom` is configured with `-n`, which
-> sends a desktop notification naming what it killed and why. With nothing on the bus to
-> receive it, an OOM kill is completely silent: an application vanishes and you have no idea
-> which subsystem decided that. Verify with `notify-send hello` before you trust Phase 4's
-> reporting.
+### What to turn off
+
+Plasma's defaults are reasonable, but three things earn nothing on this workload and are
+handled by `scripts/reclaim.sh` — see Layer 5 for what each costs.
 
 ---
 
@@ -216,9 +218,9 @@ The fix is four layers:
 3. **Hard caps on Docker** — so a container can never take the whole machine
 4. **An escape hatch** — so if it happens anyway, you don't hold the power button
 
-**The desktop was never where the memory went.** Measured on this machine, the entire Plasma session — compositor, shell, panel, every KDE daemon — was **0.58 GiB**. Firefox alone was **8.13 GiB**, 53% of the 15.3 GiB actually available. niri + Noctalia is cheaper still and worth having, but the win is in the low hundreds of megabytes.
+**The desktop was never where the memory went.** Measured on this machine, the entire Plasma session — compositor, shell, panel, every KDE daemon — is **0.58 GiB**. Firefox alone is **8.13 GiB**, 53% of the 15.3 GiB actually available.
 
-If you read this guide expecting the window manager to be the fix, you will tune the wrong thing. The four layers below are worth gigabytes. The desktop swap is worth a rounding error.
+If you read this guide expecting the window manager to be the fix, you will tune the wrong thing. The four layers below are worth gigabytes; the lightest possible desktop would be worth a couple of hundred megabytes. That asymmetry is the whole reason this guide is structured the way it is.
 
 ---
 
@@ -336,25 +338,23 @@ ManagedOOMMemoryPressureLimit=45%
 EOF
 ```
 
-#### Protect the shell:
+#### Protect the desktop session:
 
-Prevent `systemd-oomd` from killing the desktop shell when an *application* runs out of
-memory. Under Plasma this drop-in went on `plasma-plasmashell.service`; here it goes on the
-Noctalia unit this repo ships (`home/private_dot_config/systemd/user/noctalia.service`), which
-already carries it:
+Prevent `systemd-oomd` from killing the shell when an *application* runs out of memory:
 
-```ini
+```bash
+mkdir -p ~/.config/systemd/user/plasma-plasmashell.service.d
+tee ~/.config/systemd/user/plasma-plasmashell.service.d/50-oom.conf > /dev/null <<'EOF'
 [Service]
 ManagedOOMPreference=avoid
 OOMScoreAdjust=-500
+EOF
 ```
 
-> **NB — this is the concrete reason Noctalia gets a systemd unit at all.** Started from
-> niri's `spawn-at-startup` it would be an unsupervised child of the compositor: there would
-> be no unit to attach these two lines to, and nothing to restart it afterwards. Since
-> Noctalia is simultaneously the bar, the launcher, the notifications, the OSD *and* the lock
-> screen, having the OOM killer choose it means losing all five at once — with only a TTY to
-> recover from.
+> **NB — losing the shell to reclaim memory is worse than almost anything it was holding.**
+> `plasmashell` is the panel, the launcher, the notifications and the desktop at once. Take
+> it out of the running for both killers, and make sure earlyoom's `--avoid` list names it
+> too (Layer 2b).
 
 Apply and verify:
 
@@ -362,7 +362,7 @@ Apply and verify:
 sudo systemctl daemon-reload
 systemctl --user daemon-reload
 sudo systemctl enable --now systemd-oomd     # NB: Arch does not enable it for you
-systemctl --user restart noctalia.service
+systemctl --user restart plasma-plasmashell.service
 oomctl
 ```
 
@@ -383,13 +383,13 @@ installed by `system/apply.sh`:
 [Service]
 ExecStart=
 ExecStart=/usr/bin/earlyoom -r 3600 -m 4 -s 20 \
-  --avoid '^(systemd|systemd-.*|sshd|niri|noctalia|xwayland-satell|Xwayland|greetd|agreety|tuigreet|dbus-.*|pipewire|wireplumber|gnome-keyring-d|NetworkManager)$' \
-  --prefer '^(node|Web Content|Isolated Web Co|firefox|code-insiders|dotnet|sqlservr|java)$' \
+  --avoid '^(systemd|systemd-.*|sshd|kwin_wayland|plasmashell|kded6|krunner|ksmserver|plasma-.*|sddm|sddm-greeter|dbus-.*|pipewire|wireplumber|NetworkManager)$' \
+  --prefer '^(node|brave|code-insiders|dotnet|sqlservr|java)$' \
   -n
 ```
 
 That means: trigger when free RAM drops below 4% *or* free swap below 20%, never touch the
-session, preferentially kill Node/Firefox/SQL Server, and send a desktop notification (`-n`)
+session, preferentially kill Node/Brave/SQL Server, and send a desktop notification (`-n`)
 so you know what died and why.
 
 > **NB — why an `ExecStart=` override and not `/etc/default/earlyoom`, which is where this
@@ -405,17 +405,24 @@ so you know what died and why.
 > The empty `ExecStart=` line is required — it *resets* the list. Without it systemd refuses
 > the unit with "more than one ExecStart= setting".
 
-> **NB — the `--avoid` list is load-bearing, and it was actively dangerous after the move.**
-> It used to name `kwin_wayland|plasmashell|kded6|krunner|sddm` — five processes that do not
-> exist here. **An avoid-list naming only dead processes protects nothing**, so earlyoom's
-> first kill under pressure would have been as likely to be `niri` as the runaway Node
-> process, taking the whole session with it. That converts your OOM protection into an OOM
-> cause.
+> **NB — the `--avoid` list must name the CURRENT session's processes, and it is worth
+> re-reading it after any desktop change.** An avoid-list naming processes that do not exist
+> protects nothing, and earlyoom's first kill under pressure is then as likely to be the
+> compositor as the runaway Node process — which converts your OOM protection into an OOM
+> cause. (This is not hypothetical: while this repo briefly targeted a bare compositor, the
+> list still named `kwin_wayland` and `plasmashell`, protecting five processes that were not
+> running.)
 >
-> And note `xwayland-satell`, not `xwayland-satellite`: earlyoom matches
-> `/proc/<pid>/comm`, which the kernel truncates to **15 characters**. The 18-character name
-> would never match. `Isolated Web Co` in the `--prefer` list is the same trap, already
-> worked around.
+> **And names are truncated.** earlyoom matches `/proc/<pid>/comm`, which the kernel caps at
+> **15 characters** — anything longer will never match, however correct it looks.
+> Check with `ps -eo comm` before adding a long name.
+>
+> **NB — `--prefer` got weaker when the browser changed.** Firefox named its content
+> processes `Isolated Web Co` and its parent `firefox`, so earlyoom could be aimed at *tabs*
+> and would never take the whole browser. Chromium names every process in the tree `brave` —
+> parent, renderers, GPU, utility alike. earlyoom kills whichever is largest, usually a
+> renderer but possibly the parent, which takes the entire browser down. There is no way to
+> express "tabs only" here.
 
 Because a silently-ignored config is the exact failure this design avoids, verify from the
 **kernel**, never by reading back the file you wrote:
@@ -423,7 +430,7 @@ Because a silently-ignored config is the exact failure this design avoids, verif
 ```bash
 sudo systemctl enable --now earlyoom
 tr '\0' ' ' < /proc/$(systemctl show -p MainPID --value earlyoom)/cmdline
-# must contain --avoid ... niri ...
+# must contain --avoid ... plasmashell ...
 ```
 
 `scripts/doctor.sh` runs exactly this check.
@@ -569,16 +576,10 @@ Hold **Alt + PrtSc** and press **F**. The kernel immediately kills the largest m
 **2. Drop to a TTY**
 **Ctrl + Alt + F3** → log in → `btop` or `pkill -9 node`. A TTY needs almost no memory to render, so it usually responds when the compositor won't.
 
-> **NB — recovery is different under niri, and worse in one specific way.** On Plasma, a
-> crashed shell left the compositor running and `systemctl --user restart
-> plasma-plasmashell` got your session back. niri *is* the compositor: if it dies, the
-> session goes with it. What you can recover in place is the **shell** — because this repo
-> runs Noctalia as a supervised systemd user unit rather than a `spawn-at-startup` child:
-> ```bash
-> systemctl --user restart noctalia.service
-> ```
-> If you had started it from `spawn-at-startup`, nothing would restart it and the TTY would
-> be your only route. That is the practical payoff of the unit.
+> **NB — a crashed shell is recoverable in place; a crashed compositor is not.** If the
+> panel and launcher vanish but your windows are still there, `systemctl --user restart
+> plasma-plasmashell` gets the session back without losing anything. If `kwin_wayland`
+> itself dies, the session goes with it and the TTY is your route.
 
 **3. Run risky builds inside a cage — the best habit here**
 
@@ -597,58 +598,93 @@ docker stats                # per container
 ps aux --sort=-%mem | head  # per process
 ```
 
-### 🧹 Layer 5 — what you no longer have to reclaim
+### 🧹 Layer 5 — reclaim what KDE ships but you don't use
 
-This section used to be sixty-six lines of removal work. On CachyOS + niri most of it is
-**prevented rather than reclaimed**, and that inversion is the interesting part — it is the
-clearest single argument for a minimal session.
+Two kinds of reclaim here, and it is worth keeping them apart because Fedora only had one of
+them. `scripts/reclaim.sh` does both and reports both.
 
-| Old target | What it cost on Fedora KDE | Status here |
+#### RAM — KDE services you are paying for and not using
+
+| Target | Measured cost | Why it earns nothing here |
 |---|---|---|
-| KDE PIM / Akonadi | **507 MB across 16 processes and a MySQL database, for zero mail accounts** | Never installed. Not a task. |
-| Baloo | indexed every `node_modules` tree it could find — sustained CPU, RAM and SSD writes | Does not exist |
-| PackageKit | 200–300 MB resident, woken periodically by Discover | Not installed; pacman has no resident daemon |
-| `abrtd` and friends | Fedora-only crash reporting | Does not exist — but see `systemd-coredump` below |
-| Discover notifier | measured at 24 MB resident / **350 MB swapped** | Not installed |
+| **KDE PIM / Akonadi** | **507 MB across 16 processes + a 125 MB MySQL database** | Zero configured mail accounts. Biggest single win on the list |
+| **Baloo** | sustained CPU, RAM and SSD writes | It indexes every `node_modules` tree it can find. On an Nx monorepo that is hundreds of thousands of files, and you search with `rg`/`fzf` anyway |
+| **PackageKit** | 200–300 MB resident | Discover's backend. You update with `pacman` |
+| **Discover notifier** | 24 MB resident / **350 MB swapped** | Measured. Most of its cost was invisible to `ps` because it had been paged out |
 
-That Akonadi number is worth keeping as history rather than instruction: **507 MB for zero
-mail accounts** is the most memorable measurement in this guide, and it is why the default
-posture here is "install the session, not the desktop environment".
+> **NB — that last row is a lesson about measurement, not about Discover.** `ps` RSS showed
+> 24 MB and the process looked harmless. It had ballooned, gone idle, and been swapped
+> wholesale into zram — where it still occupied 350 MB of compressed pages. Resident size is
+> not footprint. Check `SwapPss` in `/proc/<pid>/smaps_rollup` before concluding something is
+> small.
 
-**What Arch has instead is a disk problem Fedora never had**, and this is what
-`scripts/reclaim.sh` now targets:
+> **NB — check for real data before removing Akonadi.** `reclaim.sh` refuses to touch it if
+> `~/.config/akonadi/agentsrc` or `~/.local/share/local-mail` exist. "I don't use kmail" and
+> "kmail has nothing in it" are different statements.
+
+#### Menu clutter — the preinstalled application suite
+
+The KDE edition ships a full app suite: games, a media player, a paint program, a character
+map, remote-desktop client and server, a help centre, and so on. `scripts/reclaim.sh` offers
+to remove them.
+
+**Be honest about what this buys.** These are not daemons. They sit on disk and cost nothing
+at rest, so removing them is about menu clutter and update churn — *not* memory. If you came
+to this section looking for RAM, the Akonadi/Baloo/PackageKit block above is where it is,
+and the browser is where it really is.
+
+Two design notes on how the script does it, because both are deliberate:
+
+- **It does not hardcode a removal list.** CachyOS's default set is not Fedora's, so a fixed
+  list would try to remove things that were never installed and miss things that were. The
+  script filters its candidates through `pacman -Qq` first.
+- **"Nobody uses this" is a claim about you, not about the package.** So it checks for a
+  config or state directory and refuses to offer anything you have actually opened. Measured
+  on the outgoing machine, that check mattered: of ~34 candidates, all but three had never
+  been launched — but `kwrite`, `kamoso` and `plasma-welcome` had, and a blind list would
+  have taken them.
+
+> **NB — some of these look like clutter and are load-bearing.** Never remove
+> `kde-gtk-config` (it themes every GTK app from the Plasma colour scheme),
+> `plasma-browser-integration`, `xdg-desktop-portal-kde`, `kwallet`/`ksshaskpass`,
+> `plasma-nm`/`plasma-pa`, `powerdevil`/`kscreen`, `plasma-thunderbolt` (the T490s has
+> Thunderbolt 3 and this is what authorises devices), or `plasma-disks` (the GUI for
+> `smartmontools`, which is in `reliability.tsv`). The script's candidate list excludes all
+> of them.
+
+> **NB — removing any member of `plasma-meta` removes `plasma-meta` itself**, because the
+> meta-package depends on it. Harmless in itself — a meta-package exists only to pull
+> dependencies — but it means a future `pacman -Syu` will no longer add newly-introduced
+> Plasma components automatically. Reinstall `plasma-meta` if you want that back.
+
+#### Disk — an Arch problem Fedora never had
 
 - **The pacman package cache.** `dnf` defaults to `keepcache=False`; pacman keeps **every
-  version of every package it has ever installed, forever**. Routinely 5–20 GB. `paccache
-  -rk2` trims it and `paccache.timer` (enabled by `system/apply.sh`) keeps it trimmed.
+  version of every package it has ever installed, forever**. Routinely 5–20 GB.
+  `paccache -rk2` trims it; `paccache.timer` (enabled by `system/apply.sh`) keeps it trimmed.
 - **Orphaned packages** — dependencies whose parent is gone. `pacman -Qtdq`. Nothing removes
   these automatically.
-- **`systemd-coredump`.** The Arch analogue of ABRT, and a *disk* problem rather than a RAM
+- **`systemd-coredump`** — the Arch analogue of ABRT, and a disk problem rather than a RAM
   one: measured **389 MB in `/var/lib/systemd/coredump` with no cap configured at all**.
   `system/systemd/coredump.conf.d/99-size-cap.conf` fixes that going forward.
-  > **NB** — `ProcessSizeMax=2G` is the load-bearing key on a 16 GB box. Firefox's address
+  > **NB** — `ProcessSizeMax=2G` is the load-bearing key on a 16 GB box. A browser's address
   > space is several GB; without a limit, one browser crash writes a multi-GB core to disk
   > *under the very memory pressure that caused the crash*. Over the limit the dump is
-  > skipped rather than truncated, which is what you want — a truncated core is useless
-  > anyway.
+  > skipped rather than truncated, which is what you want.
 - **Docker.** 9.08 GB of images (2.74 GB reclaimable) plus **7.49 GB of build cache, 100%
-  reclaimable**. `daemon.json`'s `builder.gc` caps the build cache; dangling images and
-  stopped containers are not covered by it.
+  reclaimable**, on a 238 GB disk.
 
-**Still needed, unchanged:** the journal cap
-(`system/journald.conf.d/99-size-cap.conf`) — without it the journal grows to the
-10%-of-`/var` default, which on a 238 GB disk is ~4 GB of logs nobody reads.
+**Still needed, unchanged:** the journal cap (`system/journald.conf.d/99-size-cap.conf`) —
+without it the journal grows to the 10%-of-`/var` default, ~4 GB of logs nobody reads.
 
-**Terminal scrollback** moved from Konsole to Ghostty: `scrollback-limit = 2000000` in
-`~/.config/ghostty/config.ghostty`. Unlimited scrollback across ten tabs of Docker logs is a
-genuine leak — though note Ghostty's *default* is already a bounded 10 MB, so this is a
-tightening rather than a fix, and the setting is in **bytes**, not lines.
+**Terminal scrollback** moved from Konsole to Ghostty: `scrollback-limit = 2000000`.
+Unlimited scrollback across ten tabs of Docker logs is a genuine leak — though Ghostty's
+*default* is already a bounded 10 MB, so this is a tightening rather than a fix, and the
+setting is in **bytes**, not lines.
 
-**Do not** chase compositor micro-optimisations. The reasoning that applied to KWin applies
-to niri: the UHD 620 handles compositing in hardware for near-zero cost, and turning effects
-off saves single-digit MB while making the desktop feel worse. (This config already disables
-shadows and blur — but for a different reason: 3456×1080 logical pixels across two heads on
-an integrated GPU is a frame-rate budget, not a memory one.)
+**Don't** disable KWin compositing. On Wayland you can't meaningfully, and the UHD 620
+handles it in hardware for near-zero cost. Turning off blur and animations saves single-digit
+MB and makes the desktop worse.
 
 > **NB — do not disable `ananicy-cpp` or `scx_loader`/`scx-scheds`.** CachyOS ships these
 > deliberately: they are the auto-nice daemon and the `sched_ext` scheduler that make the
@@ -657,10 +693,10 @@ an integrated GPU is a frame-rate budget, not a memory one.)
 
 ### 📊 Your realistic 16 GB budget
 
-| Component | Measured on Fedora KDE, 2026-09 | Expected on CachyOS + niri |
+| Component | Measured, Fedora KDE 2026-09 | Expected on CachyOS + KDE |
 |---|---|---|
-| Desktop session, idle | **0.58 GiB** | 0.25–0.40 GiB — *re-measure and fill in* |
-| Firefox, real working set | **8.13 GiB** (4.65 resident + 3.48 held in zram) | unchanged — these are your pages, not your DE |
+| Desktop session, idle | **0.58 GiB** | unchanged — same desktop, newer packages |
+| Browser, real working set | Firefox: **8.13 GiB** (4.65 resident + 3.48 in zram) | Brave Origin: ~2.9 GiB measured — but the same web apps, so re-measure under load |
 | VS Code + TS language server on Nx monorepo | 1.5–3.0 GB | unchanged |
 | SQL Server container (capped) | 2.5 GB *when running* | unchanged |
 | nopCommerce .NET (workstation GC) | 0.5–1.0 GB | unchanged |
@@ -673,17 +709,23 @@ whole session measured **0.58 GiB**, and it put Firefox at 3.5–5.5 GB when the
 set was **8.13 GiB**. It was wrong by roughly 2× about the desktop and by ~3 GB about the
 browser, and both errors pointed attention at the wrong component.
 
-Firefox alone is **53% of the 15.3 GiB this machine actually has**. The reason the machine
-still feels fine is that **3.48 GiB of Firefox is not in RAM at all** — it is compressed in
-zram at 3.79:1, costing about 0.92 GiB of physical memory. zram is not a safety margin here.
-It is load-bearing, permanently, every day. That is worth knowing before you ever set
-`vm.swappiness` back to something "sensible".
+On Firefox the browser alone was **53% of the 15.3 GiB this machine actually has**, and the
+reason it still felt fine was that **3.48 GiB of it was not in RAM at all** — compressed in
+zram at 3.79:1, costing about 0.92 GiB of physical memory.
+
+Brave Origin measures far lower (~2.9 GiB on the same browsing), so the arithmetic is less
+brutal now. But **do not read that as headroom**: the five permanently-open web apps that
+dominated the Firefox number cost the same in any engine, and Brave has **no memory cap at
+all** where Firefox had a 6 GiB ceiling. Re-measure under real load before relaxing anything.
+
+Either way, zram is not a safety margin here. It is load-bearing, permanently, every day —
+worth knowing before you ever set `vm.swappiness` back to something "sensible".
 
 Two consequences for how you read the rest of this guide:
 
-- The desktop swap from Plasma to niri + Noctalia is worth a few hundred megabytes. Real,
-  and worth doing — but if you came here expecting the window manager to be the fix, you are
-  tuning the wrong thing.
+- The lightest possible desktop would be worth a couple of hundred megabytes against this.
+  If you came here expecting the window manager to be the fix, you are tuning the wrong
+  thing — and that is not hypothetical, this guide once made exactly that mistake.
 - The SQL Server cap and the Node heap limit are not optimisations. Without them SQL Server
   alone claims 12.8 GB against a budget that is already over.
 
@@ -708,7 +750,7 @@ Two things worth knowing about that resolution:
   piping the upstream installer into `sh`, dropping a binary in `/usr/local/bin`. Both of
   those special cases are gone, and `pkg_unavailable arch` now returns **nothing**.
 - **Exactly two packages come from the AUR**: `visual-studio-code-insiders-bin` and
-  `vesktop-bin`, plus the Maple Mono NF font. They are declared in a separate `aur` column and
+  `vesktop-bin` and `brave-origin-bin`. They are declared in a separate `aur` column and
   installed in their own `paru` transaction, so one failed build cannot take the other ~90
   repo packages down with it.
 
@@ -720,169 +762,119 @@ sudo systemctl enable --now postgresql
 ```
 > Honestly: for your workload, run Postgres in Docker instead and skip the host install entirely. One less always-on service.
 
-### 🦊 Firefox
+### 🦊 Brave Origin
 
-Use the **repo package**, not the Flatpak — it has VA-API hardware video decode wired up against the system ffmpeg, while the Flatpak sandboxes its own codec-limited copy.
+**Brave Origin** is the browser here — a stripped-down Brave that removes the
+revenue-generating features (Rewards, Wallet, News, Leo, Talk, Tor, VPN, Web Discovery) and
+the telemetry, keeping Shields and the Chromium core. **Free on Linux**; the $59.99 one-time
+charge applies only to macOS/Windows/Android/iOS.
 
-```bash
-sudo pacman -S --needed firefox
-```
-
-> **Firefox is still the right pick on a 16 GB dev box** — but the reason given here originally was wrong, and it is worth correcting because it led to a useless config.
->
-> The old claim was "Firefox caps content processes (8 by default) and shares them across tabs." That has not been true since **Fission** (site isolation) became the default. Fission allocates a content process per *site*, not from a fixed pool, so `dom.ipc.processCount` no longer bounds anything. Measured on this machine at Firefox 154: **13 tabs → 22 content processes**, with `dom.ipc.processCount` pinned to 4. The pref was doing nothing.
->
-> Measured cost of a real working set (13 tabs, 2 windows): **5.6 GiB PSS**, of which the four largest content processes were 598 / 583 / 456 / 446 MB. None of that is a leak — each was a genuine long-lived SPA (Teams, WhatsApp Web, Gmail, Docs, Claude, Linear). **A dozen web apps cost roughly what a dozen native apps cost.** Budget for it rather than expecting a pref to fix it.
->
-> Measure it yourself with PSS, never RSS — see the warning under *Diagnosing it* below.
-
-#### Memory settings
-
-Don't hand-edit `about:config`. Run **`scripts/firefox-tune.sh`**, which installs `firefox/user.js` into every profile on the machine (the profile directory has a random prefix, so chezmoi can't target it). Prefs take effect at the **next Firefox launch**.
-
-| Preference | Set to | Why |
-|---|---|---|
-| `browser.sessionhistory.max_total_viewers` | `2` | The big one. Default `-1` means "derive from RAM", which hits the formula's ceiling of **8**. A "viewer" is a fully rendered, still-live page kept for instant Back. |
-| `browser.sessionstore.max_tabs_undo` | `5` | Default 25 *per window*. This profile was retaining 50 closed tabs, all held by the parent process. |
-| `browser.sessionstore.max_windows_undo` | `1` | Default 5. Same story. |
-| `browser.tabs.unloadOnLowMemory` | `true` | Firefox's Memory Saver equivalent. |
-| `browser.sessionstore.interval` | `60000` | Session saves every 60s instead of 15s — fewer NVMe writes. |
-| `dom.ipc.processCount` | `8` (shipped default) | **A dead letter under Fission** — see the correction above. Reset *explicitly*, not deleted: removing a line from `user.js` does **not** unset the pref, because the old value is already saved in `prefs.js` and outlives it. |
-| `dom.ipc.processCount.webIsolated` | `2` | The Fission-era equivalent (default 4) = max processes *per site*. Honest scope: with 13 tabs on 13 domains this changes nothing; it only guards the many-tabs-of-one-site case. |
-
-Realistically these reclaim a few hundred MB of *overhead*. They cannot shrink the pages themselves. **The ceiling that actually protects the rest of the system is the cgroup cap**, below.
-
-#### The cap that actually matters
-
-Firefox has no "use at most N GB" setting, so the ceiling has to come from outside it. On
-this machine that ceiling is **6 GiB of `MemoryHigh` on Firefox's own cgroup** — and both
-*how* it is applied and *what it costs* changed with the move off Plasma. Read both halves.
-
-##### Getting Firefox into its own cgroup
-
-Under Plasma this was free: KDE's KProcessRunner launched every `.desktop` app as a transient
-systemd user unit named `app-<desktop-id>@<hex>.service`, so Firefox already had a private
-cgroup and a drop-in on the *template* unit applied to every instance.
-
-**niri does not do this**, and the failure is silent. niri's shipped unit sets
-`Slice=session.slice`, so applications it spawns are direct children of the compositor and
-inherit *its* cgroup. No `app-*.service` is ever created, the drop-in matches nothing, and
-you have no cap.
-
-> **NB — this is the worst class of config failure, because everything still looks correct.**
-> The drop-in file is present, `systemctl --user daemon-reload` succeeds, `chezmoi` reports
-> it applied, and the cap does not exist. You would believe you had a 6 GiB ceiling on the
-> single largest process on the machine, and you would not. Nothing logs it.
->
-> The check that actually proves it — and the reason `scripts/doctor.sh` prints the cgroup
-> path as a note rather than just a pass/fail:
-> ```bash
-> cat /proc/$(pgrep -x firefox | head -1)/cgroup
-> ```
-> A path ending in `session.scope` or `niri.service` means there is no per-app cap. You want
-> to see an `app-…firefox….service` path.
-
-There are two working answers, and this repo ships both:
-
-| | How | When |
-|---|---|---|
-| **Wrapper** | `~/.local/bin/firefox-capped` runs `systemd-run --user --scope --slice=app.slice -p MemoryHigh=6G`, and a shadowing `~/.local/share/applications/firefox.desktop` points every launch path at it | Default. Works on any compositor, needs nothing installed, and can be tested before you commit to anything |
-| **uwsm** | `uwsm start -S -F -- niri.desktop` with `UWSM_APP_UNIT_TYPE=service` recreates real per-app units — `app-niri-firefox@<hex>.service` — so the original drop-in works unchanged | Preferred once you are on CachyOS. Also restores per-app cgroups for VS Code, node and dotnet, which the wrapper does not |
-
-**Use one or the other, never both.** Under uwsm the wrapper would produce a unit named
-`app-niri-firefox-capped@…`, which a `firefox` drop-in would not match.
-
-The `.desktop` shadow matters more than it looks: pointing only the `Mod+B` keybind at the
-wrapper would leave the Noctalia launcher, `xdg-open` and portal hand-offs uncapped. And the
-`Exec=` line must be an **absolute** path — `~/.local/bin` is on the *shell's* `PATH`, which
-a launcher or a portal does not inherit.
-
-##### What the cap actually costs
-
-`MemoryHigh` **throttles and reclaims**; it does not kill. Over the line the kernel pushes
-Firefox's coldest pages out until it fits, and zram takes them at **3.79:1 with zstd**, so
-reclaimed memory costs about a quarter of its size. That is why this is cheap *on this
-machine specifically*, and it is the same reasoning behind `vm.swappiness = 180`.
-
-> **NB — an earlier revision of this guide told you to run
-> `grep '^high' memory.events  # 0 = never throttled yet`, framing the cap as a safety net
-> you would probably never touch. That was measured and it is false.** On the old machine:
-> **~114,000 `high` events in 8 hours** — roughly four per second, sustained — against
-> **7.2 million major faults**, with an 8.13 GiB working set held under a 6 GiB cap.
->
-> This is not a ceiling you occasionally brush. It is a **permanently engaged throttle**, and
-> it has been running that way every day. The machine feels fine *because* of it, not
-> despite it.
-
-Be careful about what those 7.2M major faults cost, and do not let this guide overclaim.
-Under zram-only swap, a swap-in counts as `pgmajfault` even though it never touches the NVMe
-— that half is a zstd decompression, microseconds, exactly as promised above. But
-file-backed pages (libxul and friends) evicted under the same pressure *are* re-read from
-the SSD, at millisecond cost and against a consumer NVMe's write-endurance budget. Get the
-split rather than guessing:
+It is installed from Brave's own repository, not Arch's — `packages/desktop.tsv` marks it as
+an AUR row. If the AUR package name has drifted, the universal fallback works on any distro:
 
 ```bash
-grep -E '^(pswpin|pgmajfault)' /proc/vmstat
-# the gap between them is the file-backed re-read
+curl -fsS https://dl.brave.com/install.sh | FLAVOR=origin sh
 ```
 
-So treat this as a decision with measured inputs, not a solved problem:
+#### Why this browser, measured rather than assumed
 
-- **Raise the cap toward 8G** and accept that Firefox owns over half the machine.
-- **Keep 6G** and accept ~114k throttle events plus the NVMe traffic.
-- **Cut the working set** — which is what item 1 of "If you do only five things" now says,
-  and the only option that actually changes the arithmetic.
+The previous version of this guide argued at length for Firefox on a low-RAM machine. That
+argument was tested and it did not survive.
 
-Two things the cap does **not** do, so a quiet no-op is not mistaken for success:
+Controlled comparison — identical six pages, fresh profile, no extensions, PSS:
 
-- It makes the *kernel* reclaim pages. It does **not** make Firefox free anything.
-  `browser.tabs.unloadOnLowMemory` polls system-wide `MemAvailable` and is **not
-  cgroup-aware**, so it will never fire because of this cap. Knowing the cap fires constantly
-  makes that caveat more important, not less.
-- It is per-cgroup. If the cgroup is wrong, everything above is theatre — which is why the
-  `/proc/<pid>/cgroup` check comes first.
+| | Processes | Memory |
+|---|---|---|
+| Firefox | 18 | **1,328 MB** |
+| Brave Origin | 18 | **766 MB** |
+
+Two honest caveats, because this is the kind of number that gets quoted out of context:
+
+- **Neither profile had extensions.** The strongest theoretical argument *against* Chromium
+  is its process model — Firefox runs all extensions in one shared process (measured at
+  191 MB for 19 extensions), while Chromium gives each extension its own. That was never
+  tested and remains unverified in both directions.
+- **This is engine overhead, not your real workload.** The measured 8.13 GiB on the old
+  Firefox setup was five permanently-open logged-in web apps at ~580 MB each. Those cost the
+  same in any engine. No browser switch touches them.
+
+#### The cap that used to matter, and why it is gone
+
+Firefox got a hard 6 GiB ceiling here, and it was genuinely load-bearing: measured working
+set 8.13 GiB against a 6 GiB `MemoryHigh`, with **~114,000 throttle events in 8 hours** —
+roughly four per second, sustained. The machine felt fine *because* of that cap.
+
+**That mechanism does not port to Brave, and it is worth understanding why rather than
+quietly dropping it.**
+
+Under Plasma, KDE's KProcessRunner launches each `.desktop` app as a transient unit, so
+Firefox landed in `app-firefox@<hex>.service` and a drop-in on the *template* unit applied
+to every instance. Brave gets such a unit too — `app-brave\x2dorigin@<hex>.service` is
+created and does exist. But **Chromium then self-registers its own transient scope**,
+`app-org.chromium.Chromium-<PID>.scope`, and migrates the bulk of its processes into it.
+
+Measured on this machine:
+
+```
+app-brave\x2dorigin@<hex>.service        2 processes    391 MB
+app-org.chromium.Chromium-6464.scope    32 processes   1034 MB
+```
+
+A drop-in on the template unit would therefore cap about 15% of the browser and silently
+miss the rest. And the scope's name carries the **PID**, so no template drop-in can target
+it at all.
+
+> **NB — so there is currently NO per-app memory cap on the browser, and that is a
+> deliberate choice rather than an oversight.** Shipping a drop-in that catches two
+> processes out of thirty-four would be worse than shipping nothing: it would look
+> configured, `systemctl` would confirm the file, and the ceiling would not exist. That is
+> the exact failure this guide keeps warning about.
+>
+> `scripts/doctor.sh` reports Brave's live cgroups and total PSS as a **note** rather than a
+> pass/fail, so if the browser ever grows into a problem you will see it rather than
+> discover it.
+>
+> If a ceiling becomes necessary, the mechanism is a **slice**, not a unit drop-in — cgroup
+> limits are hierarchical, so a child cgroup cannot exceed its parent's `MemoryHigh`
+> regardless of what Chromium creates inside it. That needs verifying against where Chromium
+> actually places its scope before it is trusted.
+
+Whether it is needed is an open question. Firefox was 8.13 GiB; Brave with the same real
+browsing measures around 2.9 GiB. Watch the doctor note before adding machinery.
 
 #### Diagnosing it
 
-`about:processes` gives a live per-tab breakdown — genuinely better than anything Chromium offers. `about:unloads` shows discard order.
+`brave://system` and Brave's own Task Manager (`Shift+Esc`) give a per-tab breakdown.
 
-> ⚠️ **Never sum `ps` RSS for a multi-process browser.** RSS counts every shared page in full against *every* process mapping it, so a 25-process Firefox double-counts libxul and the shared JS runtime ~25 times. This guide's own doctor check did exactly that and reported **8.3 GB** where the system monitor said **5.6 GB**. Use PSS, which divides each shared page by its sharer count:
+> ⚠️ **Never sum `ps` RSS for a multi-process browser.** RSS counts every shared page in full
+> against *every* process mapping it, so a 30-process Chromium double-counts its shared
+> runtime ~30 times. This guide's own doctor check once did exactly that and reported
+> **8.3 GB** where the system monitor said **5.6 GB**. Use PSS, which divides each shared
+> page by its sharer count:
 > ```bash
-> for p in $(pgrep -f /usr/lib64/firefox/firefox); do
+> for p in $(pgrep -f /opt/brave.com/brave-origin); do
 >   awk '/^Pss:/{print $2}' /proc/$p/smaps_rollup 2>/dev/null
 > done | awk '{s+=$1} END {printf "%.2f GiB\n", s/1048576}'
 > ```
 
 #### Extensions are not free
 
-An extension holding `<all_urls>` injects a content script into **every** content process, so its cost scales with tab count rather than with how often you use it. This profile had **10 of 20** extensions on `<all_urls>`, plus a 173 MB `WebExtensions` process. `scripts/doctor.sh` reports the ratio. Audit anything on that list you don't use daily — and drop the ones Firefox or Plasma already do natively (screenshots, picture-in-picture, media keys via Plasma Integration).
+An extension with access to every site injects a content script into **every** renderer, so
+its cost scales with tab count rather than with how often you use it. On the old Firefox
+profile that was **10 of 20** extensions.
+
+Chromium additionally gives **each extension its own process**, where Firefox used one shared
+process for all of them. Porting a large extension set across is therefore the one place the
+switch could plausibly cost you memory — worth watching in `Shift+Esc` as you re-add them.
+
+Drop anything the browser or desktop already does natively: Brave has Shields (so a separate
+blocker is redundant), picture-in-picture, and screenshots built in, and Plasma handles media
+keys via `plasma-browser-integration`.
 
 #### Hardware video acceleration
 
-Firefox on Wayland enables VA-API by default now. Verify at **`about:support` → Graphics** — look for `HARDWARE_VIDEO_DECODING: available` and `Compositing: WebRender`. If it says software, confirm `vainfo` still works from Phase 3 and that `media.ffmpeg.vaapi.enabled` is `true`.
-
-#### What you lose without Plasma Integration
-
-`plasma-browser-integration` has no niri equivalent, and it is worth naming what goes rather
-than pretending otherwise: media controls in the panel and on the lock screen, downloads
-surfaced as desktop notifications, and open tabs searchable from the launcher.
-
-Noctalia's media widget picks up anything exposing MPRIS, which covers Firefox's own media
-sessions — so the panel controls largely come back. Tab search does not. Do not install the
-add-on: without its native host it does nothing but add an `<all_urls>` extension to the
-count, which is the opposite of what the section above is asking you to do.
-
-#### Extensions — your list, ported
-
-Direct Firefox equivalents exist for nearly all of them:
-
-**Install:** uBlock Origin · Bitwarden · Tampermonkey · SponsorBlock · Return YouTube Dislike · Enhancer for YouTube · Cookie Editor · Proton VPN · Wappalyzer · Privacy Badger · To Google Translate · Buster Captcha Solver
-
-**Drop these:** Decentraleyes (dead project — modern cache partitioning made it redundant), Disconnect, and Don't Track Me Google. On Firefox, uBlock Origin runs with **full MV2 `webRequest` blocking**, which Chromium removed. It genuinely covers what those three did, and Firefox's built-in Enhanced Tracking Protection (Settings → Privacy → **Strict**) covers the rest. That's four fewer background processes.
-
-**Add for your work:** Angular DevTools (yes, it's on addons.mozilla.org — no Chromium needed), React DevTools if relevant, and **Multi-Account Containers** for keeping client/staging/prod logins separate without separate profiles.
-
-Then import your Tampermonkey userscripts, and sign into Firefox Sync or import your Bitwarden vault.
+`LIBVA_DRIVER_NAME=iHD` is set in `~/.config/environment.d/50-wayland.conf`. Verify with
+`vainfo`, and check `brave://gpu` reports hardware decode rather than software.
 
 ### 󰳕 Editors
 
@@ -940,22 +932,26 @@ paru -S vesktop-bin
 > pnpm: 30–60 minutes on 4 cores, and multiple GB of RAM while it runs. On this machine that
 > build can itself trip the OOM protections Phase 4 just installed.
 
-For **LinkedIn, Reddit, WhatsApp, X, YouTube Music, Figma, ChatGPT, Claude** — this is the one place Firefox costs you something. **Mozilla removed site-specific browser / PWA install support**, so there's no "Install page as app" menu item. Three options, best-first for your machine:
+For **LinkedIn, Reddit, WhatsApp, X, YouTube Music, Figma, ChatGPT, Claude** — the browser
+switch actually improved this. Firefox needed a workaround here because **Mozilla removed
+site-specific browser / PWA support**, so there was no "install page as app". Chromium has it
+natively.
 
-**1. Pinned tabs (recommended).** Right-click tab → **Pin Tab**. They persist across restarts, sit as small icons on the left, and — critically — **share Firefox's existing content processes**. Marginal cost per pinned tab is 50–150 MB rather than a whole new browser instance. On 16 GB this is far and away the right answer.
+**1. Install as app (now the easy answer).** ⋮ menu → **Cast, save and share → Install page
+as app**. You get a real `.desktop` entry that shows up in KRunner and pins to the panel, in
+its own window without browser chrome.
 
-**2. PWAsForFirefox** — if you specifically want dock icons and separate windows:
+> **NB — but check the process cost before you convert everything.** Each installed app gets
+> its own renderer, and Chromium is less willing to share renderers across app windows than
+> Firefox was across pinned tabs. Watch `Shift+Esc` (Brave's task manager) after converting
+> two or three, rather than doing all six and then wondering where the memory went.
 
-```bash
-paru -S firefox-pwa
-```
+**2. Pinned tabs** remain the cheaper option for anything you don't need a separate window
+for. They persist across restarts and share existing renderers.
 
-Then install the companion extension from addons.mozilla.org. It creates real `.desktop`
-entries that show up in the Noctalia launcher. Each site runs in its own profile, so budget ~200 MB apiece — cheaper than Chromium PWAs, still not free.
-
-**3. Keep a minimal Chromium** just for PWAs (`sudo pacman -S chromium`). Only worth it if some site is genuinely broken in Firefox. It costs you a second browser engine in RAM, which defeats the point of switching.
-
-> Whichever you pick: six always-open web apps is 1–1.5 GB permanently gone. Pin your three most-used, bookmark the rest.
+> Whichever you pick: six always-open web apps is 1–1.5 GB permanently gone, and that was
+> true on Firefox and is true on Brave. This is the same finding as the budget table — the
+> pages cost what they cost. Pin your three most-used, bookmark the rest.
 
 ### 🧩 Flatpak — deliberately not used
 
@@ -972,15 +968,23 @@ they fail on a machine with no `flatpak` binary.
 
 ## 💻 Phase 6: Terminal & Shell
 
-### 🔤 Install Maple Mono
+### 🔤 The coding font
 
-```bash
-mkdir -p ~/.local/share/fonts
-cd /tmp
-curl -LO https://github.com/subframe7536/maple-font/releases/latest/download/MapleMono-NF-unhinted.zip
-unzip -o MapleMono-NF-unhinted.zip -d ~/.local/share/fonts/MapleMono
-fc-cache -fv
-```
+**Cascadia Code NF** — `ttf-cascadia-code-nerd`, in the Arch repos, installed by
+`bootstrap.sh`. Nothing to download by hand.
+
+> **NB — the family string is `Cascadia Code NF`, not `Cascadia Code Nerd Font`.**
+> fontconfig matches on the name in the font's own name table, and the Nerd Font build
+> reports "NF". Give it the wrong string and fontconfig silently substitutes some other
+> monospace — no error, just the wrong font. Check with:
+> ```bash
+> fc-match 'Cascadia Code NF'
+> ```
+
+This replaced **Maple Mono NF**, for two reasons. The AUR package
+(`ttf-maplemono-nf-unhinted`) failed to install during VM testing, and Cascadia is in the
+official repos — one fewer AUR dependency in the critical path. Maple's stylistic sets also
+did not survive the move; see the Ghostty section.
 
 ### 🖥 Ghostty
 
@@ -1000,14 +1004,40 @@ deleted:
 
 | Setting | Value | Was |
 |---|---|---|
-| `theme` | `catppuccin-latte` | *nothing* — bundled with Ghostty, no external file needed |
-| `font-family` / `font-size` | Maple Mono NF, 10 | same (the guide previously said 11pt; the profile said 10) |
-| `font-feature` | 16 stylistic sets | matches `editor.fontLigatures` in the VS Code settings exactly |
+| `theme` | `Catppuccin Latte` | *nothing* — bundled with Ghostty, no external file needed |
+| `font-family` / `font-size` | Cascadia Code NF, 10 | was Maple Mono NF; the guide once said 11pt, the profile said 10 |
+| `font-feature` | `calt`, `zero` | matches `editor.fontLigatures` in the VS Code settings exactly |
 | `window-width` / `window-height` | 125 × 30 | Konsole `TerminalColumns`/`TerminalRows` |
 | `cursor-style` | `bar` | Konsole `CursorShape=1` |
 | `command` | `/bin/zsh` | same |
 | `scrollback-limit` | 2000000 | Konsole `HistorySize=10000` *lines* |
-| `window-decoration` | `server` | pairs with niri's `prefer-no-csd` |
+| `window-decoration` | `server` | let KWin draw the frame, matching every other window |
+
+> **NB — the font-feature list shrank from 16 entries to 2, and that is a fix rather than a
+> loss.** The old list (`cv03`, `cv05`, `cv09`, `cv10`, `cv61`, `cv38`, `cv42`, `cv43`,
+> `ss03`, `ss07`–`ss11`) named *Maple Mono's* stylistic sets. Cascadia Code NF does not have
+> them. Read straight out of the font's GSUB table, its complete feature set is:
+>
+> ```
+> aalt calt case ccmp dnom fina frac init locl medi numr ordn
+> rclt rlig sinf ss02 ss19 ss20 subs sups zero
+> ```
+>
+> So 14 of the 16 would have been **silently ignored** — a font feature that does not exist
+> is not an error, it is just absent. `calt` (ligatures) and `zero` (slashed zero) are the
+> two that carry over. `ss02`/`ss19`/`ss20` exist but carry no UI label in the font and
+> Microsoft does not document them, so they are left off rather than cargo-culted.
+>
+> Verify any font's real features rather than copying a list between fonts:
+> ```bash
+> python3 -c "
+> import struct,sys; d=open(sys.argv[1],'rb').read()
+> u16=lambda o: struct.unpack('>H',d[o:o+2])[0]; u32=lambda o: struct.unpack('>I',d[o:o+4])[0]
+> t={d[12+i*16:16+i*16].decode('latin1'):u32(12+i*16+8) for i in range(u16(4))}
+> b=t['GSUB']; f=b+u16(b+6)
+> print(sorted({d[f+2+i*6:f+6+i*6].decode('latin1') for i in range(u16(f))}))
+> " "$(fc-match -f '%{file}' 'Cascadia Code NF')"
+> ```
 
 > **NB — `scrollback-limit` is in BYTES, not lines**, despite the name, and Ghostty's
 > *default* is already a bounded 10 MB. So writing `10000000` would be a silent no-op — the
@@ -1121,164 +1151,74 @@ gh auth login
 
 ---
 
-## ⚙️ Phase 7: niri + Noctalia
+## ⚙️ Phase 7: Plasma personalization
 
-Phase 7 used to be a list of places to click in System Settings. It is now a list of files,
-all of them in this repo, all version-controlled. That is a straight upgrade: the old Phase 7
-could not be applied by `bootstrap.sh` and this one can.
+Short, because this is the phase you get for free. Everything below is a System Settings
+panel, and none of it needs a config file in this repo.
 
-> **The biggest adjustment in this whole migration is not technical.** `kwinrc` on the old
-> machine reported `[Desktops] Number=1` — one virtual desktop, two monitors, windows placed
-> by hand. niri is a *scrollable-tiling* compositor built around an infinite horizontal strip.
-> Expect the window model, not the distro, to be the thing that takes a week.
+### 🖥 Displays
 
-### 🗂 The files
+System Settings → Display Configuration. The measured layout on this machine:
 
-| File | What it owns |
-|---|---|
-| `~/.config/niri/config.kdl` | input, layout, window rules, environment, startup |
-| `~/.config/niri/outputs.kdl` | the display geometry — the one file hardware changes touch |
-| `~/.config/niri/binds.kdl` | keybindings |
-| `~/.config/noctalia/config.toml` | bar, launcher, theme mode, templates |
-| `~/.config/noctalia/palettes/CatppuccinLatte.json` | the pinned palette |
-| `~/.config/systemd/user/noctalia.service` | supervision for the shell (see below) |
-| `~/.config/xdg-desktop-portal/niri-portals.conf` | portal arbitration |
-| `~/.config/environment.d/50-wayland.conf` | session-wide environment |
+| Output | Resolution | Scale |
+|---|---|---|
+| `eDP-1` (internal) | 1920×1080 | **125%** |
+| `HDMI-A-2` (external) | 1920×1080 | 100% |
 
-`niri validate` checks the config; niri also hot-reloads it on save, so iteration is fast.
+> **NB — mixed per-output fractional scaling is the single strongest practical argument for
+> Plasma on this hardware.** Plasma 6 on Wayland handles it correctly per output. The lighter
+> desktops that look attractive on a RAM budget — XFCE, LXQt, Cinnamon — are X11-first and
+> handle it badly, and you would be trading roughly 200 MB (a few percent of what the browser costs)
+> for blurry or wrongly-sized windows every time you dock. That is a bad trade.
 
-### 🖥 Outputs — the fiddly part
+### ⌨️ Shortcuts worth setting immediately
 
-```kdl
-output "eDP-1"     { mode "1920x1080@60.000"; scale 1.25; position x=0    y=216 }
-output "HDMI-A-2"  { mode "1920x1080@60.000"; scale 1.0;  position x=1536 y=0   }
-```
+System Settings → Shortcuts. The defaults that matter are already right: `Meta+L` locks,
+`Meta+D` peeks at the desktop, `Meta+W` is the overview, `Ctrl+Alt+Del` opens the logout
+screen, and the media keys work including `Shift`+volume for 1% steps.
 
-> **NB — those two numbers are arithmetic, not taste, and they look arbitrary enough that
-> someone will "fix" them.** Positions are in *logical* pixels. `eDP-1` at scale 1.25 is
-> 1920 / 1.25 = **1536** logical wide, so the external starts at x=1536; using 1920 leaves a
-> 384px dead zone the pointer gets stuck in. And 1080 − 864 = **216** bottom-aligns the
-> shorter internal panel against the taller external.
+Worth adding: a shortcut for Ghostty (`Meta+Return` if you like), and `Ctrl+Shift+Esc` for
+System Monitor.
 
-Mixed fractional scaling across two heads is the highest-risk part of this config on an
-integrated GPU. Test hotplug in both directions, and check that XWayland clients are not
-blurry on the scaled head.
+### 🖼 GTK apps: KDE already themes them — don't "fix" this
 
-### ⌨️ Keybindings
+`kde-gtk-config`'s kded module regenerates `~/.config/gtk-{3,4}.0/` and `~/.gtkrc-2.0` from
+the live Plasma colour scheme on **every** scheme change. Verified: all four files rewritten
+within milliseconds of each other at login. A chezmoi-managed copy would be silently
+clobbered and would look like a theming bug, which is why those paths are in
+`home/.chezmoiignore`.
 
-The actions worth keeping from Plasma survived: `Mod+L` locks, `Ctrl+Alt+Del` opens the
-session panel, and the media keys keep their behaviour — including `Shift`+volume for 1%
-steps and `allow-when-locked=true` so they work on the lock screen.
+`gtk-theme-name=Breeze` is *correct*. Breeze is the widget style and KDE recolours it.
 
-> **NB — one real conflict, resolved deliberately.** Vim-style tiling would put
-> `focus-column-right` on `Mod+L`, but `Mod+L` has been "lock the screen" for years. The
-> home-row pair here is therefore `Mod+H` / `Mod+Semicolon`, with the arrow keys doing the
-> same job. If you would rather have `hjkl`, move lock to `Mod+Escape` in `binds.kdl`.
-
-Screenshots need no package: niri has `screenshot`, `screenshot-screen` and
-`screenshot-window` built in, bound to `Print`, `Ctrl+Print` and `Alt+Print`. `grim`/`slurp`
-are installed only for scripted captures.
-
-### 🧩 Noctalia, and the config layer that beats yours
-
-Noctalia loads three layers: built-in defaults, then `~/.config/noctalia/config.toml`, then
-**`~/.local/state/noctalia/settings.toml`, written by the Settings GUI — which loads last and
-wins.** A value you set in the file this repo manages can be silently overridden by something
-you clicked once, months ago.
-
-Do not fight it. Noctalia *removes* a GUI key when its value matches the layer below, so
-`settings.toml` self-prunes to exactly what diverges — which makes it an accurate drift
-signal rather than noise. The workflow:
-
-```bash
-noctalia config export > /tmp/merged.toml
-diff /tmp/merged.toml ~/.config/noctalia/config.toml   # promote what you want to keep
-chezmoi re-add ~/.config/noctalia/config.toml
-rm ~/.local/state/noctalia/settings.toml               # clears all GUI overrides
-```
-
-`scripts/doctor.sh` warns whenever that file is non-empty, so it never goes unnoticed.
-
-**Noctalia gets a hand-written systemd user unit**, because its package ships none. Started
-from `spawn-at-startup` it would be an unsupervised child of the compositor: nothing restarts
-it when it crashes, and there is no unit to attach `ManagedOOMPreference=avoid` to. Since
-Noctalia *is* the bar, the launcher, the notifications, the OSD and the lock screen, losing
-it means losing all of them at once with only a TTY to recover from.
-
-```bash
-systemctl --user add-wants niri.service noctalia.service
-```
-
-### 🖼 GTK and Qt — the rule that inverted
-
-The old version of this section argued at length that KDE themed GTK for free — that
-`kde-gtk-config`'s `gtkconfig.so` rewrote `~/.config/gtk-{3,4}.0/` and `~/.gtkrc-2.0` from
-the live colour scheme on every change (verified at the time: all four files rewritten within
-milliseconds of each other at login), and therefore that you must **never** version-control
-those paths.
-
-**Every word of that was right for Plasma, and every word of it is now wrong.** There is no
-kded and nothing regenerates anything. Left unmanaged, GTK apps sit on default Adwaita
-forever — the same symptom the old note warned about, arriving from the opposite direction.
-
-The ownership split now:
-
-- **Noctalia owns colour.** Its `gtk3`/`gtk4`/`qt6ct` templates write `noctalia.css` and
-  import it into `gtk.css`. Those generated files are in `.chezmoiignore`.
-- **chezmoi owns everything that is not colour** — `gtk-3.0/settings.ini` and
-  `gtk-4.0/settings.ini`: theme name, icon theme, font, cursor, hinting.
-- **`.gtkrc-2.0` stays ignored permanently.** Nothing left after the migration is a GTK2 app.
-
-Qt is now *also* your problem, which it never was under Plasma. After dropping the KDE apps
-the survivors are OBS and Telegram, so `qt6ct` plus `QT_QPA_PLATFORMTHEME=qt6ct` covers it.
-Skip Kvantum.
-
-> **NB — do not set `GTK_THEME` in the environment.** It hard-overrides `settings.ini` and
-> breaks libadwaita apps, and it is a confusing thing to debug months later.
-
-### 🔌 Portals — three separate things depend on this
-
-```ini
-[preferred]
-default=gtk
-org.freedesktop.impl.portal.ScreenCast=gnome
-org.freedesktop.impl.portal.Settings=gtk
-org.freedesktop.impl.portal.Secret=gnome-keyring
-```
-
-- **`Settings=gtk`** serves `org.freedesktop.appearance`, which is what VS Code's
-  `window.autoDetectColorScheme` reads. Without it VS Code silently stops following the theme.
-- **`ScreenCast=gnome`** is what makes screen sharing work at all (Teams/Meet in Firefox,
-  OBS). With no `portals.conf` present the backends race on D-Bus and you get a picker that
-  works in one app and hangs in another.
-- **`Secret=gnome-keyring`** replaces kwallet, which left with Plasma. `gh`, VS Code and
-  anything else using libsecret talk to this.
-
-Verify after login — this must print `2` (light):
-
-```bash
-gdbus call --session -d org.freedesktop.portal.Desktop -o /org/freedesktop/portal/desktop \
-  -m org.freedesktop.portal.Settings.Read org.freedesktop.appearance color-scheme
-```
+> **NB — this rule flipped twice, so here is the test rather than the answer.** It was briefly
+> inverted while this repo targeted a bare compositor: with no kded, nothing regenerates GTK
+> config, so leaving it unmanaged left GTK apps on default Adwaita forever — the same symptom
+> as clobbering, from the opposite cause. The question is never "should GTK config be
+> version-controlled"; it is **"does something else already own these files?"** Under Plasma
+> it does.
 
 ### 🖱 Touchpad & TrackPoint (T490s)
 
-Same settings as the old System Settings panel, now declarative in `input {}`: tap-to-click,
-disable-while-typing, natural scroll, clickfinger.
-
-> **NB — the TrackPoint needs its own `trackpoint {}` block.** It inherits nothing from
-> `touchpad {}` — they are separate libinput devices — so without it the red nub gets stock
-> settings and, in particular, no press-to-scroll. `scroll-method "on-button-down"` with
-> `scroll-button 274` is the entire reason a ThinkPad has a middle button.
+System Settings → Mouse & Touchpad. Enable tap-to-click and disable-while-typing (the
+touchpad sits directly under the space bar). The TrackPoint gets press-to-scroll via the
+middle button — that is the entire reason a ThinkPad has one.
 
 ### ⏱️ Autostart
 
-`spawn-at-startup` in `config.kdl`, or a systemd user unit wired in with
-`systemctl --user add-wants niri.service <unit>` — niri's own unit pulls in
-`xdg-desktop-autostart.target`, so `.desktop` autostart files still work too.
+System Settings → Autostart. **Do not autostart Vesktop or Telegram** — that is ~700 MB at
+login for two things you open a few times a day. This is the single most effective item in
+the whole phase.
 
-**The advice is unchanged and still worth following: do not autostart Vesktop or Telegram.**
-That is ~700 MB at login for two things you open a few times a day.
+### 🔌 Browser integration
+
+Install the **Plasma Integration** add-on from addons.mozilla.org; the native host
+(`plasma-browser-integration`) is in `packages/desktop.tsv`. You get media controls in the
+panel and on the lock screen, downloads in KDE notifications, and open tabs searchable from
+KRunner.
+
+> **NB — it is worth the extension slot, but count it.** Phase 5 asks you to audit extensions
+> holding `<all_urls>` because their cost scales with tab count. Plasma Integration is one
+> more. It happens to buy back real functionality; most of the others on your list do not.
 
 ## 🧹 Phase 8: Maintenance
 
@@ -1369,8 +1309,7 @@ cat /proc/sys/kernel/sysrq         # 1
 | Fully frozen, no cursor | **Alt + PrtSc + F** (kills biggest process) |
 | Frozen, SysRq did nothing | **Ctrl + Alt + F3**, log in, `pkill -9 node` or `sudo systemctl restart docker` |
 | Building something large from the AUR | `capped paru -S <pkg>` — `makepkg` builds in `/var/tmp`, but a big Rust or Electron build still wants gigabytes |
-| Bar/launcher/notifications gone, windows still work | `systemctl --user restart noctalia.service` |
-| Compositor itself is gone | There is no in-place fix — niri *is* the session. Ctrl+Alt+F3 and restart from the TTY |
+| Plasma crashed but the system is alive | `systemctl --user restart plasma-plasmashell` |
 | Absolute last resort | **Alt + PrtSc + R, E, I, S, U, B** (in order, ~2s apart) — safe reboot with disk sync. Never hold the power button first. |
 
 **Before any heavy build:** `capped nx build ... --parallel=2`
@@ -1379,18 +1318,23 @@ cat /proc/sys/kernel/sysrq         # 1
 
 ## 📌 If you do only five things
 
-*Revised after the move to CachyOS + niri. The original list's items 1 and 3 named software
-that no longer exists on this machine — Akonadi, Baloo and PackageKit are not "reclaimed"
-here, they are simply never installed. What replaced them is measurement: in 8 days the old
+*Revised after the move to CachyOS. Items 1 and 3 of the original list still stand — Akonadi,
+Baloo and PackageKit come back with KDE and are still worth reclaiming — but they are no
+longer the top of the list, because measurement moved them down it:*
+
+* in 8 days the old
 machine logged **one** OOM kill (earlyoom, a `code-insiders` renderer at `oom_score` 1178,
 which took the window with it), and Firefox's 6 GiB cap fired **~114,000 times in 8 hours**.
 The list below is ordered by measured impact, not by how satisfying the cleanup feels.*
 
-1. **Cut the Firefox working set.** 8.13 GiB against 15.3 GiB usable, with the cap engaged
-   roughly four times a second. Nothing else on this list is within an order of magnitude,
-   and no pref will fix it — see Phase 5.
-2. **Audit your browser and editor extensions.** Firefox's working set is **8.13 GiB (PSS)**
-   across ~27 content processes, with **10 of 20 extensions holding `<all_urls>`**; VS Code
+1. **Watch the browser working set.** Firefox measured 8.13 GiB against 15.3 GiB usable,
+   with its 6 GiB cap engaged roughly four times a second. Brave Origin measures far lower
+   (~2.9 GiB) — but it has **no cap at all**, because Chromium self-scopes and the drop-in
+   mechanism does not port. Nothing else on this list is within an order of magnitude of the
+   browser, and no setting will fix it — see Phase 5.
+2. **Audit your browser and editor extensions.** On the old Firefox profile, **10 of 20
+   extensions held `<all_urls>`** — and Chromium gives each extension its own process, so
+   porting a large set across is the one place this browser switch could cost you; VS Code
    is 2.9 GB on disk across 97 extensions, and the one OOM kill in 8 days was a
    `code-insiders` renderer. An `<all_urls>` extension injects a content script into *every*
    content process, so its cost scales with tab count rather than with how often you use it.
@@ -1401,21 +1345,21 @@ The list below is ordered by measured impact, not by how satisfying the cleanup 
    > an RSS sum, which is precisely the mistake this guide warns against 300 lines earlier:
    > RSS counts every shared page in full against every process that maps it, so a
    > 27-process browser double-counts libxul dozens of times. The 8.13 GiB above is PSS.
-3. **Fix earlyoom's `--avoid` list.** It named `kwin_wayland|plasmashell|kded6|krunner|sddm`
-   — five processes that do not exist on this machine any more. An avoid-list naming only
-   dead processes protects nothing, and under memory pressure earlyoom's first kill is then
-   as likely to be `niri` as the runaway Node process. That converts your OOM protection into
-   an OOM *cause*. It must name `niri`, `noctalia`, `xwayland-satell` and the greeter.
+3. **Remove KDE PIM (Akonadi) and disable Baloo.** 507 MB across 16 processes plus a 125 MB
+   MySQL database, for zero mail accounts; and an indexer that walks every `node_modules`
+   tree on the disk. ~770 MB for nothing. Layer 5, and `scripts/reclaim.sh` does it with a
+   safety check first.
 4. **Get a rollback path** (Layer 0), on day one. `snapper` has been the single failing check
    in `scripts/doctor.sh` since this repo was created, and a fresh install is the moment it
    is free. Everything else here edits system state.
 5. **Apply the settings you already wrote down, and then verify them from the kernel.** The
-   audit found the VS Code watcher excludes, the Firefox prefs and the terminal scrollback
+   audit found the VS Code watcher excludes, the browser prefs and the terminal scrollback
    cap were all documented here but never applied. Worse, three settings *looked* applied and
    were not: `bat`'s `--theme=auto` silently fell back to Monokai, `ghostty` had no theme at
-   all while the shell inside it assumed one, and the Firefox `MemoryHigh` drop-in would have
-   matched no unit under niri. A guide only helps once it's executed — and a config only
-   helps once something reads it back. That is what `scripts/doctor.sh` is for.
+   all while the shell inside it assumed one, and the browser `MemoryHigh` drop-in would have
+   sat under a unit name that no longer holds the processes. A guide only helps once it's executed —
+   and a config only helps once something reads it back. That is what `scripts/doctor.sh` is
+   for.
 
 > **On SQL Server:** the original item 2 warned it would claim ~80% of host RAM. Still true
 > *when you run it* — but the measured stack here (Postgres, Traefik, nginx, MinIO, .NET,
@@ -1437,7 +1381,6 @@ git clone <this-repo> ~/dotfiles && ~/dotfiles/bootstrap.sh
 sudo ./system/apply.sh      # the /etc drop-ins from Phase 4, plus enabling the
                             # units Arch ships disabled (oomd, earlyoom, fstrim)
 ./scripts/reclaim.sh        # Layer 5 — now disk, not RAM: pacman cache, orphans, coredumps
-./scripts/firefox-tune.sh   # Firefox prefs into every profile (needs a Firefox restart)
 ./scripts/doctor.sh         # verifies every claim in this document
 ```
 
@@ -1452,7 +1395,10 @@ correct and did nothing:
   an OSC 11 query — so the configured Catppuccin theme never applied in a pipe.
 - `ghostty` had a font and no theme at all, which is why Konsole was the terminal actually
   in use.
-- The Firefox `MemoryHigh` drop-in targeted a unit template that niri never instantiates.
+- The browser `MemoryHigh` drop-in survived two renames (Fedora's
+  `app-org.mozilla.firefox@` → Arch's `app-firefox@`) and then stopped applying entirely,
+  because Chromium self-registers a PID-named scope and migrates its processes out of the
+  unit KDE creates. Measured: 2 processes capped, 32 not.
 
 None of the three produced an error. All three are the reason doctor now verifies from the
 **kernel** — the live `earlyoom` argv, the real cgroup path, `sysctl -n vm.swappiness` — and

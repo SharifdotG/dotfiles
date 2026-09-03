@@ -19,7 +19,7 @@
   "extensions.autoUpdate": false,
 
   "telemetry.telemetryLevel": "off",
-  "editor.fontFamily": "Maple Mono NF",
+  "editor.fontFamily": "Cascadia Code NF",
   "files.autoSave": "afterDelay",
   "files.autoSaveDelay": 500,
   "C_Cpp.clang_format_fallbackStyle": "{BasedOnStyle: LLVM, IndentWidth: 4, TabWidth: 4}",
@@ -56,7 +56,7 @@
   },
   "explorer.confirmDelete": false,
   "terminal.integrated.fontLigatures.enabled": true,
-  "editor.fontLigatures": "'calt', 'zero', 'cv03', 'cv05', 'cv09', 'cv10', 'cv61', 'cv38', 'cv42', 'cv43', 'ss03', 'ss07', 'ss08', 'ss09', 'ss10', 'ss11'",
+  "editor.fontLigatures": "'calt', 'zero', 'ss01', 'ss02', 'ss20'",
   "github.copilot.nextEditSuggestions.enabled": true,
   "[markdown]": {
     "editor.defaultFormatter": "DavidAnson.vscode-markdownlint",

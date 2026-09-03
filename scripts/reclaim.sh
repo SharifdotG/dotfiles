@@ -2,14 +2,15 @@
 # Reclaim disk. Reports before acting, and prompts before anything destructive.
 # Run as your normal user; it calls sudo for the steps that need it.
 #
-# NB: this script changed IDENTITY in the move off Fedora KDE, not just its
-# commands. There it reclaimed RAM - Baloo indexing node_modules, Akonadi's 16
-# processes and MySQL database for zero mail accounts, PackageKit's resident
-# 200-300 MB. None of that exists on CachyOS + niri; it is prevented rather than
-# reclaimed (see docs/SETUP-GUIDE.md Phase 4, Layer 5). What Arch has instead is
-# a DISK problem Fedora never had: pacman keeps every version of every package
-# it has ever installed, forever. So the before/after metric is now free disk,
-# not resident memory.
+# This reclaims BOTH, and the distinction matters:
+#
+#   RAM  - Baloo indexing every node_modules tree, Akonadi's 16 processes and
+#          MySQL database for zero mail accounts, PackageKit's resident
+#          200-300 MB. These come back with KDE, so they are live targets.
+#   DISK - a problem Fedora never had: pacman keeps every version of every
+#          package it has ever installed, forever. Routinely 5-20 GB.
+#
+# Both are reported before and after.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 . lib/log.sh
@@ -17,8 +18,144 @@ cd "$(dirname "$0")/.."
 [ "$(id -u)" -ne 0 ] || die "run me as your normal user, not root (I call sudo myself)"
 
 avail() { df --output=avail -BM / | tail -1 | tr -dc '0-9'; }
-before=$(avail)
-info "Free on /: ${before} MB"
+resident() { ps -eo rss,comm --no-headers | grep -iE 'akonadi|packagekitd|Discover|baloo' |
+             grep -v grep | awk '{s+=$1} END {printf "%.0f", s/1024}'; }
+before_disk=$(avail); before_ram=$(resident)
+info "Free on /: ${before_disk} MB   |   reclaim targets resident: ${before_ram:-0} MB"
+
+# ── 0. KDE idle services ─────────────────────────────────────────────────────
+step "Baloo file indexer"
+# Indexes every node_modules tree it can find: sustained CPU, RAM and SSD writes
+# for zero benefit when you search with rg/fzf.
+if ! command -v balooctl6 >/dev/null; then
+  ok "baloo not installed"
+else
+  _baloo=$(balooctl6 status 2>&1 || true)   # exits 1 when disabled; capture, don't pipe
+  case "$_baloo" in
+    *"currently disabled"*) ok "baloo already disabled" ;;
+    *) balooctl6 disable && balooctl6 purge && ok "baloo disabled + index purged" ;;
+  esac
+fi
+
+step "KDE PIM / Akonadi"
+# Measured on the old machine: 507 MB across 16 processes plus a 125 MB MySQL
+# database, for zero configured mail accounts. The single biggest RAM reclaim
+# available on a KDE desktop.
+#
+# NB: check for actual DATA before removing anything. Someone who really does
+# read mail here would lose it, and "I don't use kmail" is not the same as
+# "kmail has nothing in it".
+if ! pacman -Qq kmail >/dev/null 2>&1 && ! pgrep -x akonadi_control >/dev/null; then
+  ok "KDE PIM not installed"
+elif [ -s "$HOME/.config/akonadi/agentsrc" ] || [ -d "$HOME/.local/share/local-mail" ]; then
+  warn "Akonadi has configured accounts or local mail - NOT touching it"
+  info "  ~/.config/akonadi/agentsrc and ~/.local/share/local-mail exist"
+else
+  command -v akonadictl >/dev/null && akonadictl stop 2>/dev/null
+  read -r -p "Remove kmail/korganizer/kaddressbook/akonadi? [y/N] " a
+  case "${a:-n}" in
+    [yY]*) sudo pacman -Rns --noconfirm kmail korganizer kaddressbook akonadi 2>/dev/null &&
+             ok "KDE PIM removed" || warn "some PIM packages were not installed" ;;
+    *)     ok "left alone" ;;
+  esac
+fi
+
+step "PackageKit"
+# Discover's backend. Wakes periodically and holds 200-300 MB. You update with
+# pacman, so it earns nothing here.
+# NB: Discover on Arch uses PackageKit only if it is installed; masking it does
+# not break flatpak support in Discover.
+if ! pacman -Qq packagekit >/dev/null 2>&1; then
+  ok "packagekit not installed"
+elif [ "$(systemctl is-enabled packagekit 2>/dev/null)" = masked ]; then
+  ok "packagekit already masked"
+else
+  read -r -p "Mask PackageKit? Discover loses native package installs. [y/N] " a
+  case "${a:-n}" in
+    [yY]*) sudo systemctl mask --now packagekit && ok "packagekit masked" ;;
+    *)     ok "left alone" ;;
+  esac
+fi
+
+# ── 0b. preinstalled KDE apps you have never opened ──────────────────────────
+# The KDE edition ships a full application suite. Most of it is small on disk and
+# costs nothing at rest - these are not daemons - so the honest reason to remove
+# them is menu clutter and update churn, not RAM. Do not expect this to move the
+# memory needle; Layer 5's Akonadi/Baloo/PackageKit section is where that is.
+#
+# NB: this deliberately does NOT hardcode "remove these 40 packages". Two reasons:
+#   1. CachyOS's default set is not Fedora's, so a fixed list would try to remove
+#      things that were never installed and miss things that were.
+#   2. "Nobody uses this" is a claim about YOU, not about the package. So the
+#      script checks for a config or state directory first and refuses to offer
+#      anything you have actually opened.
+#
+# NB: NEVER put these in the candidate list. They look like clutter and are
+# load-bearing:
+#   kde-gtk-config              themes every GTK app from the Plasma colour scheme
+#   plasma-browser-integration  media keys, downloads, KRunner tab search
+#   xdg-desktop-portal-kde      file pickers and screen sharing for everything
+#   kwallet / ksshaskpass       secrets, and the ssh-agent askpass
+#   plasma-nm / plasma-pa       network and audio applets
+#   powerdevil / kscreen        power management and display configuration
+#   plasma-thunderbolt          the T490s has Thunderbolt 3; this authorises devices
+#   plasma-disks                the GUI for smartmontools, which is in reliability.tsv
+step "preinstalled KDE apps"
+_cands="kmahjongg kmines kpat katomic kblocks kbounce kbreakout kdiamond kfourinline
+        kgoldrunner kigo killbots kjumpingcube klickety klines knavalbattle knetwalk
+        knights kolf kollision konquest kreversi kshisen ksirk ksnakeduel kspaceduel
+        ksquares ksudoku ktuberling kubrick lskat palapeli picmi bomber bovo granatier
+        elisa dragon juk kamoso kamera kolourpaint kruler kteatime kcharselect
+        kfind kmouth kbackup skanpages kwrite kdialog kdebugsettings keditbookmarks
+        krdc krfb kdenetwork-filesharing akregator kontact neochat
+        khelpcenter kinfocenter plasma-welcome plasma-vault kjournald partitionmanager"
+
+_remove=""; _kept=""
+for pkg in $_cands; do
+  pacman -Qq "$pkg" >/dev/null 2>&1 || continue           # not installed
+  # Has it ever been opened? KDE writes <name>rc on first run; some apps use a
+  # directory instead.
+  # NB: `[ -e A ] || [ -e B ]`, NOT `ls -d A B`. `ls` exits non-zero when ANY
+  # argument is missing, so an app with a config but no share dir would be
+  # reported as never-opened - misclassifying a used app as safe to delete.
+  # Wrong direction for a destructive action.
+  if [ -e "$HOME/.config/${pkg}rc" ] ||
+     [ -e "$HOME/.config/$pkg" ] ||
+     [ -e "$HOME/.local/share/$pkg" ]; then
+    _kept="$_kept $pkg"
+  else
+    _remove="$_remove $pkg"
+  fi
+done
+
+if [ -z "$_remove" ]; then
+  ok "nothing to remove - none of the candidates are installed"
+else
+  info "never opened (no config or state):"
+  printf '%s ' $_remove | fold -sw 72 -s | sed 's/^/    /'; echo
+  info "  $(printf '%s\n' $_remove | wc -l) package(s)"
+  if [ -n "$_kept" ]; then
+    info "skipping - these have a config, so you have opened them:"
+    printf '%s ' $_kept | fold -sw 72 -s | sed 's/^/    /'; echo
+  fi
+  # NB: show what pacman would actually do before asking. -Rns pulls unused
+  # dependencies too, and on a meta-package-based install that can reach further
+  # than the list you just read.
+  info "dry run:"
+  sudo pacman -Rns --print $_remove 2>&1 | tail -n +1 | head -20 | sed 's/^/    /'
+  read -r -p "Remove them? [y/N] " a
+  case "${a:-n}" in
+    [yY]*) sudo pacman -Rns --noconfirm $_remove && ok "removed" || warn "some removals failed" ;;
+    *)     ok "left alone" ;;
+  esac
+  # NB: removing any member of plasma-meta removes plasma-meta itself, because
+  # the meta-package depends on it. That is harmless in itself - a meta-package
+  # only exists to pull dependencies - but it does mean future `pacman -Syu` will
+  # no longer add newly-introduced Plasma components automatically. If you want
+  # that behaviour back, reinstall plasma-meta and let it pull what it wants.
+  pacman -Qq plasma-meta >/dev/null 2>&1 ||
+    info "plasma-meta is no longer installed - see the note in this script"
+fi
 
 # ── 1. pacman package cache ──────────────────────────────────────────────────
 # The single biggest reclaim on Arch, and the one with no Fedora analogue: dnf
@@ -95,7 +232,8 @@ else
 fi
 
 # ── 5. idle services still worth stopping ────────────────────────────────────
-# Small on CachyOS + niri. Report and prompt; never remove silently.
+# Report and prompt; never remove silently. The big KDE targets are handled in
+# section 0 above - these are the leftovers.
 #
 # NB: do NOT touch ananicy-cpp or scx_loader / scx-scheds. CachyOS ships those
 # deliberately - they are the auto-nice daemon and the sched_ext scheduler that
@@ -109,7 +247,8 @@ for svc in cups.service cups.socket avahi-daemon.service bluetooth.service; do
 done
 ok "reported only - nothing changed"
 
-after=$(avail)
+after_disk=$(avail); after_ram=$(resident)
 step "result"
-info "Free on /: ${before} MB -> ${after} MB  (reclaimed $((after - before)) MB)"
+info "Free on /:  ${before_disk} MB -> ${after_disk} MB  (reclaimed $((after_disk - before_disk)) MB)"
+info "Resident:   ${before_ram:-0} MB -> ${after_ram:-0} MB  (freed $(( ${before_ram:-0} - ${after_ram:-0} )) MB)"
 info "Verify with: scripts/doctor.sh"

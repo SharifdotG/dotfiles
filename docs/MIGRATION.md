@@ -1,4 +1,4 @@
-# Migration: Fedora KDE → CachyOS + niri + Noctalia
+# Migration: Fedora KDE → CachyOS (KDE Plasma)
 
 **Machine:** Lenovo ThinkPad T490s · i5-8365U (4C/8T, Whiskey Lake) · 16 GB (15.3 GiB usable)
 · Intel UHD 620 · 238.5 GB Intel NVMe (`INTEL SSDPEKKF256G8L`)
@@ -21,9 +21,8 @@ paths** when the migration was planned. It is the executable half of everything 
 its only copy is on the disk you are about to erase.
 
 1. Create the remote (`gh repo create`, or on github.com) and `git remote add origin …`.
-2. **Commit the untracked paths first.** `firefox/user.js` is what `scripts/firefox-tune.sh`
-   installs, and the Firefox memory cap is documented in the guide. Push without them and
-   you restore a guide that describes files the repo no longer contains.
+2. **Commit everything untracked first.** Push a partial repo and you restore a guide that
+   describes files the repo no longer contains.
 3. Check `.gitignore` before `git add -A` — it excludes `.ssh/`, `*.key`, `*_ed25519`,
    `.config/gh/`, `.npmrc`, `*.age`. This repo is intended to be public.
 4. Decide `master` vs `main` now. `home/dot_gitconfig.tmpl` sets `init.defaultBranch main`
@@ -34,57 +33,61 @@ empty · the repo loads on github.com from another device.
 
 ---
 
-## Stage 1 — Validate niri + Noctalia *before* committing to the wipe
+## Stage 1 — Rehearse the install in a VM
 
-The entire target stack is already packaged on Fedora 44: `niri`, `noctalia`,
-`xwayland-satellite`, `fuzzel`, `mako`, `grim`/`slurp`, `wl-clipboard`,
-`swaylock`/`swayidle`, and both portals. Installing niri adds a second entry to
-`/usr/share/wayland-sessions/` — which currently holds only `plasma.desktop` — so it is
-log-in-able **alongside** Plasma at zero risk to the running system.
+The desktop is not changing — Plasma on CachyOS is Plasma. What *is* changing is the distro
+underneath it, and that half is worth rehearsing where a mistake costs nothing.
 
-The argument for doing this first: **the wipe should be the last uncertainty, not the
-first.** niri is a scrollable-tiling compositor and Noctalia is a shell you have never run.
-If either does not work on UHD 620 with this display layout, you want to find that out
-while Plasma still boots and the disk is still full.
+KVM is already available on this machine (`/dev/kvm`, VT-x). Roughly 20 minutes:
 
 ```bash
-sudo dnf install niri noctalia xwayland-satellite \
-  xdg-desktop-portal-gnome xdg-desktop-portal-gtk \
-  thunar thunar-volman tumbler gvfs file-roller \
-  zathura zathura-pdf-mupdf imv qalculate
-chezmoi init --promptString desktop=niri --source ~/dotfiles   # see the NB below
-chezmoi apply --source ~/dotfiles
-niri validate
+sudo dnf install -y qemu-kvm libvirt virt-manager virt-install edk2-ovmf virt-viewer
+sudo systemctl enable --now libvirtd
+sudo usermod -aG libvirt "$USER"     # then log out and back in
+
+virt-install \
+  --name cachyos-test --memory 6144 --vcpus 4 \
+  --cpu host-passthrough --machine q35 \
+  --boot uefi,firmware.feature0.name=secure-boot,firmware.feature0.enabled=no,firmware.feature1.name=enrolled-keys,firmware.feature1.enabled=no \
+  --disk size=35,bus=virtio,format=qcow2 \
+  --cdrom ~/Downloads/cachyos.iso --os-variant archlinux \
+  --video model.type=virtio,model.acceleration.accel3d=yes \
+  --graphics spice,gl.enable=yes,listen=none \
+  --channel spicevmc --network default
 ```
 
-> **NB — the chezmoi prompt is a trap.** `home/.chezmoiignore` gates `.config/niri`,
-> `.config/noctalia` and `.config/xdg-desktop-portal` on `.desktop == "niri"`, and
-> `promptStringOnce` only asks when the key is **absent**. The live
-> `~/.config/chezmoi/chezmoi.toml` says `desktop = "plasma"`, so a plain `chezmoi init`
-> will never ask, will keep `plasma`, and will silently write **none** of your compositor
-> config. Force it with `--promptString desktop=niri`, or edit that file by hand.
+> **NB — `--cpu host-passthrough` is mandatory, not a performance tweak.** QEMU's default
+> `qemu64` model reports roughly x86-64-**v1** — no AVX2, not even SSE4.2. The guest would
+> then pick generic repos, `os/cachyos/prep.sh` would report the wrong tier, and you would be
+> rehearsing a different code path than the real machine.
 
-Then log into the niri session and exercise, in rough order of risk:
+> **NB — Secure Boot must be explicitly disabled in the VM too.** `--boot uefi` alone selects
+> the *secboot* OVMF build with Microsoft keys enrolled, and CachyOS's bootloader is not
+> signed by them. The symptom is the boot-device menu accepting your selection and silently
+> returning to itself, with no error anywhere. The feature toggles above are what avoid it —
+> verify with `virt-install --print-xml | grep secure-boot`, because a passing `--dry-run`
+> does not prove the firmware choice.
 
-- **Dual output with mixed scaling** — `eDP-1` at 1.25, `HDMI-A-2` at 1.0. Highest-risk
-  item on this hardware. Test hotplug in both directions.
-- XWayland via `xwayland-satellite`: `code-insiders`, and anything Electron.
-- Firefox: VA-API still reports as available in `about:support`, and fractional scaling is
-  not blurry.
-- Noctalia bar, launcher, notifications, lock; screenshots via the `Print` binds.
-- Ghostty at `font-size = 10` with the Catppuccin Latte theme.
-- **Capture a Niri idle memory baseline** (`systemd-cgtop -m`, or PSS via
-  `/proc/*/smaps_rollup`) to replace the measured Plasma figure of 0.58 GiB in the guide's
-  budget table. Doing this now means the guide ships with a real number.
+What the VM validates, and it is the half you cannot test on Fedora at all:
 
-> **NB — what this stage CANNOT de-risk.** `uwsm` and `app2unit` are not in Fedora's
-> repos. That means the one thing you cannot validate here is exactly the per-app-cgroup
-> mechanism the Firefox `MemoryHigh` cap depends on. On Fedora the repo uses the
-> `~/.local/bin/firefox-capped` wrapper instead, which works everywhere; switching to uwsm
-> is a post-install task (Stage 5, step 11).
+- every package name in `packages/*.tsv` resolving against the real CachyOS repos — a single
+  typo makes `pacman -Syu` abort atomically, so this is the highest-value check
+- `os/cachyos/prep.sh`, the v3 repo tier, pacman config, and the AUR seam (`paru`)
+- `system/apply.sh`: the `/etc` drop-ins, the unit-enabling loop, the zram reset dance
+- `scripts/doctor.sh` running clean with no false failures
 
-**GATE 1** — a full working day inside the niri session, on both outputs, with no blocker.
-Anything unresolved is written down as a post-install task, not carried as an assumption.
+What it cannot validate: your mixed-DPI dual-monitor layout, VA-API on the UHD 620, the
+TrackPoint, real memory pressure, or `thermald`/`fwupd`. None of those are worth a VM.
+
+Remove it completely afterwards:
+
+```bash
+virsh --connect qemu:///session destroy cachyos-test
+virsh --connect qemu:///session undefine cachyos-test --nvram --remove-all-storage
+```
+
+**GATE 1** — `bootstrap.sh` completes in the VM, and `doctor.sh` fails only on things a VM
+genuinely cannot satisfy.
 
 ---
 
@@ -197,10 +200,15 @@ directory you can list.
   cannot regenerate.**
 - **kwallet contents.** KDE is going and kwallet goes with it. Export before the wipe;
   `gnome-keyring` is the successor and it starts empty.
-- **The Firefox profile, tarred whole** (1.8 GB) even though Sync is configured. Sync
-  carries bookmarks, history, passwords, tabs and extensions — but **not** cookies/sessions,
-  extension *settings* (Tampermonkey userscripts, uBlock custom filters), container
-  assignments, or non-synced `about:config` prefs.
+- **The Brave profile, tarred whole** — `~/.config/BraveSoftware/Brave-Origin/` (212 MB).
+  Note `Brave-Origin`, **not** `Brave-Browser`; that is regular Brave's path and every guide
+  online uses it. Skip `~/.cache/BraveSoftware`.
+  > **NB — passwords and cookies are encrypted against the system keyring, not the profile.**
+  > Bookmarks, history, extensions and settings restore fine; saved logins and sessions may
+  > not, depending on whether the new install wires up a keyring where the old one didn't.
+  > Turn on **Brave Sync** (`brave://settings/braveSync`) before the wipe — it is chain-based
+  > with a 24-word code and no account. Write the code somewhere that is not this laptop.
+  > Restore into the **same or a newer** Brave version; older builds can corrupt the profile.
 - `~/Documents` (3.8 GB); `~/.config` and `~/.local` **backed up wholesale, restored
   selectively**; `~/.claude` (241 MB — real config, not just cache).
 - `~/.ssh/config` and `known_hosts` if they exist. **There is no keypair and there are zero
@@ -323,8 +331,12 @@ only copy.
 7. **Kernel: `linux-cachyos`** (BORE), plus `linux-lts` as the recovery fallback. Set
    expectations: on a 4C/8T Whiskey Lake laptop the scheduler difference is real but modest.
    Phase 4's memory work matters far more; do not let the kernel become the story.
-8. **Desktop: minimal / none.** niri and Noctalia come from `packages/desktop.tsv` at
-   bootstrap.
+8. **Desktop: the KDE Plasma edition.** It brings the workspace, display manager, Breeze,
+   the portal and the core KDE apps. `packages/desktop.tsv` adds only what the edition does
+   not ship — Brave Origin, Ghostty, the fonts, and the handful of apps you actually use.
+   > **NB — do not pick "minimal / no desktop" here.** That was the right answer while this
+   > repo targeted a bare compositor; it is the wrong answer now, and it leaves you at a TTY
+   > assembling a session by hand for no benefit.
 9. **Keep the username identical**, or every absolute path in every backup needs rewriting.
 
 ---
@@ -344,7 +356,8 @@ The ordering *is* the content.
 5. **Snapper config + a `clean install, tuned, no data` snapshot.** This is the rollback
    point that has never existed on this machine. Everything after it is recoverable.
 6. `git clone` the dotfiles repo → `./bootstrap.sh` → `sudo ./system/apply.sh`.
-   **Answer `niri` to the chezmoi desktop prompt** (see the Stage 1 NB).
+   **Answer `plasma` to the chezmoi desktop prompt** — it is the default, but
+   `promptStringOnce` caches whatever you give it and never asks again.
 7. **Restore the credential files by hand** — `~/.npmrc`, `~/.nuget/NuGet.Config`,
    `~/.docker/config.json`, `~/.config/gh/`. The repo will not do this for you, by design.
    Then `./scripts/secrets-setup.sh` for a fresh SSH key and `gh auth login`, and add the new
@@ -355,30 +368,26 @@ The ordering *is* the content.
    `.env`-class files back in from the Stage 2 archive — that is the one thing a clone
    cannot give you.
 9. **Data, selectively**: `~/Documents`, chosen `~/.config` and `~/.local` subtrees, the
-   Firefox profile, `~/.claude`. The exclusion list from Stage 3 is a *restore* policy, not
+   Brave profile, `~/.claude`. The exclusion list from Stage 3 is a *restore* policy, not
    just a backup policy.
 10. **Docker last.** Install, `systemctl enable --now docker.socket` (socket activation means
     dockerd is not resident until something talks to it — worth ~0.3 GB on a 16 GB box),
     apply `daemon.json`, restore the 8 volume tarballs, re-pull from the image list, and
     `docker load` **only** the local-only images. Do not restore build cache. Bring the stack
     up one service at a time.
-11. **Switch the Firefox cap to uwsm** — the one item Stage 1 could not validate. Install
-    `uwsm`, start the session with `uwsm start -S -F -- niri.desktop`, set
-    `UWSM_APP_UNIT_TYPE=service`, then confirm the unit name and move the cap:
+11. **Check where the browser actually lives in the cgroup tree.**
     ```bash
-    cat /proc/$(pgrep -x firefox | head -1)/cgroup
-    # want: .../app.slice/app-niri-firefox@<hex>.service
+    for p in $(pgrep -f /opt/brave.com/brave-origin); do cut -d: -f3 /proc/$p/cgroup; done | sort | uniq -c
     ```
-    If that is what you see, replace `~/.local/bin/firefox-capped` + the shadowing
-    `firefox.desktop` with a `~/.config/systemd/user/app-niri-firefox@.service.d/50-memory.conf`
-    drop-in containing `MemoryHigh=6G`, and delete the wrapper. **Use one or the other,
-    never both** — under uwsm the wrapper produces `app-niri-firefox-capped@…`, which a
-    firefox drop-in would not match. If the cgroup path is *not* what you see, keep the
-    wrapper; it works either way.
-12. `./scripts/firefox-tune.sh`, then `./scripts/doctor.sh`, and fix what it reports.
-13. **Re-measure and update the guide's baseline table.** niri session idle (replacing the
-    measured Plasma 0.58 GiB), Firefox working set, zram ratio, and whether the cap is
-    actually binding under the new launcher. This closes the loop the guide promises.
+    Expect `app-org.chromium.Chromium-<PID>.scope` — Chromium self-registers its own
+    transient scope and migrates out of the unit KDE creates, which is **why there is no
+    `MemoryHigh` cap on the browser any more**. Measured on the old machine: 32 processes in
+    the self-created scope, 2 left in KDE's unit. See Phase 5. `doctor.sh` reports this as a
+    note so it stays visible.
+12. `./scripts/doctor.sh`, and fix what it reports.
+13. **Re-measure and update the guide's baseline table.** Plasma session idle (was 0.58 GiB
+    on Fedora — expect it to be close), Brave working set, and the zram ratio. This closes the loop the guide promises, and it is the only way the
+    numbers in it stay true.
 
 **Final rule, on its own line: do not reformat the external drive for 30 days.** You will
 find the missing `.env` on day 9.
@@ -394,4 +403,4 @@ were wrong. This section is the reason to keep this file rather than delete it.)
 - **Time taken:**
 - **What broke:**
 - **Decisions that turned out wrong:**
-- **Measured after:** niri+Noctalia session idle · Firefox working set · zram ratio · boot time
+- **Measured after:** Plasma session idle · Brave working set · zram ratio · boot time

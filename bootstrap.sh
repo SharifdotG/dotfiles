@@ -36,9 +36,8 @@ command -v git >/dev/null || die "git is required"
 detect_all
 info "$DISTRO / desktop=$DESKTOP / session=$SESSION_TYPE / vm=$IS_VM"
 # This repo used to carry a fedora column too. It does not any more - the
-# package names, the /etc drop-ins and the whole desktop layer are CachyOS +
-# niri specific. Fail here rather than half-installing Arch names on something
-# else.
+# package names and the /etc drop-ins are CachyOS specific. Fail here rather
+# than half-installing Arch names on something else.
 [ "$PKG_COL" = arch ] ||
   die "this repo targets CachyOS (or Arch); detected '$DISTRO' -> column '$PKG_COL'"
 [ "$DRY" -eq 1 ] && warn "DRY RUN - nothing will be changed"
@@ -61,9 +60,9 @@ if [ "$NO_PKGS" -eq 0 ]; then
   MANIFESTS=(packages/core.tsv packages/dev.tsv packages/reliability.tsv)
   # NB: this used to be `[ "$DESKTOP" != none ] && MANIFESTS+=(desktop.tsv)`.
   # On a fresh install bootstrapped from a TTY, XDG_CURRENT_DESKTOP is unset,
-  # so DESKTOP=none and the machine silently came up with no browser, no
-  # terminal and no compositor - with no error. This repo targets exactly one
-  # laptop and that laptop has a GUI, so the desktop set is now the default.
+  # so DESKTOP=none and the machine silently came up with no browser and no
+  # terminal - with no error. This repo targets exactly one laptop and that
+  # laptop has a GUI, so the desktop set is now the default.
   [ "$NO_DESKTOP" -eq 1 ] || MANIFESTS+=(packages/desktop.tsv)
   h=$(hash_of "${MANIFESTS[@]}")
 
@@ -139,10 +138,9 @@ if command -v chezmoi >/dev/null; then
     run chezmoi apply --source "$REPO"
   else
     info "first run - chezmoi will prompt for name/email/desktop"
-    # NB: answer "niri" to the desktop prompt. home/.chezmoiignore gates
-    # .config/niri and .config/noctalia on it, and promptStringOnce caches the
-    # answer, so getting it wrong means your compositor config is silently
-    # never applied and you are never asked again.
+    # NB: "plasma" is the default and almost certainly what you want.
+    # promptStringOnce caches the answer and never asks again, so a carried-over
+    # ~/.config/chezmoi/chezmoi.toml keeps whatever the old machine said.
     run chezmoi init --apply --source "$REPO"
   fi
   ok "home configuration applied"
