@@ -1,0 +1,4 @@
+# Intel GPU only. Selected by $GPU in bootstrap.sh, not by machine.
+#id	arch	aur	nix	notes
+intel-media-driver	intel-media-driver	skip	skip	VA-API for UHD 620 and newer. Pairs with LIBVA_DRIVER_NAME=iHD, which home/private_dot_config/environment.d/50-wayland.conf.tmpl sets only when .gpu is intel. Installing the driver is not the same as selecting it, and selecting it on a non-Intel GPU disables VA-API entirely - doctor.sh checks `vainfo` for that reason
+vulkan-intel	vulkan-intel	skip	skip	ANV, the Mesa Vulkan driver for Intel. Already pulled in as a dependency today - listed explicitly so a rebuild does not depend on that staying true, and so doctor.sh's "ICD is not llvmpipe" check has something to pass against

@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Launch DaVinci Resolve with the one environment variable Polaris needs.
+# Desktop machine only (see home/.chezmoiignore).
+#
+# WHY THIS WRAPPER EXISTS
+#
+# Resolve needs an OpenCL device. On an RX 570 (Polaris, gfx803) the ROCm
+# runtime refuses to enumerate the card unless ROC_ENABLE_PRE_VEGA=1 is set,
+# because AMD removed pre-Vega support from the supported list.
+#
+# NB: set HERE and not in ~/.config/environment.d, on purpose. environment.d is
+# read by the systemd user manager and would export this into EVERY graphical
+# application on the machine. ROC_ENABLE_PRE_VEGA re-enables a code path AMD
+# stopped testing; scoping it to the one process that needs it is the
+# difference between a targeted workaround and a system-wide one.
+#
+# NB: the variable alone is NOT enough. It has no effect on ROCm 6 or newer,
+# and the repos ship 7.x - so scripts/resolve-opencl.sh has to pin the runtime
+# back to 5.7.1 first. If Resolve starts and reports "no OpenCL capable GPU",
+# the pin is what came undone, not this file. Check with `clinfo -l`.
+set -uo pipefail
+
+RESOLVE=/opt/resolve/bin/resolve
+if [ ! -x "$RESOLVE" ]; then
+  printf 'resolve: %s is not installed.\n  paru -S davinci-resolve\n' "$RESOLVE" >&2
+  exit 127
+fi
+
+# Read the OpenCL device list back before launching, rather than letting
+# Resolve fail with its own unhelpful dialog. This is cheap and it turns a
+# ten-minute "why does the splash screen hang" into one line of output.
+if command -v clinfo >/dev/null 2>&1; then
+  if ! ROC_ENABLE_PRE_VEGA=1 clinfo -l 2>/dev/null | grep -qi 'device'; then
+    printf 'resolve: no OpenCL device visible - Resolve will not start.\n' >&2
+    printf '  Run: %s/scripts/resolve-opencl.sh\n' \
+      "${DOTFILES_REPO:-$HOME/dotfiles}" >&2
+    printf '  Then: clinfo -l   (must list the Radeon)\n' >&2
+    exit 1
+  fi
+fi
+
+export ROC_ENABLE_PRE_VEGA=1
+exec "$RESOLVE" "$@"

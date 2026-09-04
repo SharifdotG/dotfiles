@@ -16,6 +16,39 @@
      though it is not a credential. Leave BLANK if you have none - the script
      then just does github.com, and `--host` adds any other on the fly.
 */ -}}
+{{- /*
+     Which machine is this. Two keys, because the answers are independent: a
+     GPU vendor is not a chassis type.
+
+     NB: deliberately NOT .chezmoi.hostname, which is what chezmoi's own docs
+     reach for. This repo is public and already treats a hostname as inventory
+     disclosure - that is the whole reason workGitHost below is prompted rather
+     than committed. Chassis and PCI vendor id say what the machine IS without
+     saying which machine it is.
+
+     NB: `output` runs the command EVERY time the template is executed. That is
+     acceptable here and nowhere else: this file is executed only at
+     `chezmoi init`, and the answers are then baked into [data] below. Do not
+     copy this pattern into a per-file template - it would fork a shell on
+     every single `chezmoi apply`.
+
+     NB: because they ARE baked, swapping a GPU leaves `gpu` stale and nothing
+     would notice - the wrong LIBVA_DRIVER_NAME does not error, it just kills
+     VA-API. So scripts/doctor.sh re-reads the PCI id live and fails when it
+     disagrees with the value stored here.
+
+     bootstrap.sh passes both with --promptString, so lib/detect.sh is the
+     single decision-maker and these defaults only apply to a bare
+     `chezmoi init`. Force a re-answer with:
+         chezmoi init --promptString profile=desktop
+*/ -}}
+{{- $autoProfile := output "sh" "-c" "if [ -e /sys/class/power_supply/BAT0 ]; then echo laptop; else case \"$(cat /sys/class/dmi/id/chassis_type 2>/dev/null)\" in 8|9|10|11|14) echo laptop ;; *) echo desktop ;; esac; fi" | trim -}}
+{{- $autoGpu := output "sh" "-c" "g=none; grep -qs 0x8086 /sys/class/drm/card*/device/vendor && g=intel; grep -qs 0x1002 /sys/class/drm/card*/device/vendor && g=amd; grep -qs 0x10de /sys/class/drm/card*/device/vendor && g=nvidia; echo $g" | trim -}}
+{{- $profile := promptStringOnce . "profile" "Machine profile (laptop/desktop)" $autoProfile -}}
+{{- $gpu := promptStringOnce . "gpu" "GPU vendor (intel/amd/nvidia/none)" $autoGpu -}}
+{{- /*
+     Hostname of a private/work git forge (continued below).
+*/ -}}
 {{- $workGitHost := promptStringOnce . "workGitHost" "Private git host for the generic credential helper (blank for none)" "" -}}
 
 # Pin the source directory into the generated config.
@@ -40,4 +73,6 @@ sourceDir = {{ .chezmoi.sourceDir | quote }}
     name    = {{ $name | quote }}
     email   = {{ $email | quote }}
     desktop = {{ $desktop | quote }}
+    profile = {{ $profile | quote }}
+    gpu     = {{ $gpu | quote }}
     workGitHost = {{ $workGitHost | quote }}

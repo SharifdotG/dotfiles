@@ -1,0 +1,25 @@
+[Desktop Entry]
+Type=Application
+Name=DaVinci Resolve
+GenericName=Video Editor
+Comment=Colour correction and non-linear video editing
+Icon=/opt/resolve/graphics/DV_Resolve.png
+Exec=resolve %f
+Terminal=false
+Categories=AudioVideo;AudioVideoEditing;Video;Graphics;
+MimeType=application/x-resolveproj;
+StartupWMClass=resolve
+
+# NB: this file exists ONLY to route the menu entry through ~/.local/bin/resolve
+# instead of /opt/resolve/bin/resolve directly, so that launching from the
+# application menu gets ROC_ENABLE_PRE_VEGA=1 the same as launching from a
+# shell. Without it, Resolve works in the terminal and fails from the menu -
+# which is a genuinely confusing way to lose an afternoon.
+#
+# NB: a user entry only overrides the package's if the FILENAME matches
+# exactly. The AUR package's is com.blackmagicdesign.resolve.desktop as of
+# davinci-resolve 21.0.4. Confirm after installing, because if upstream renames
+# it this file stops overriding anything and starts being a duplicate menu
+# entry instead:
+#     ls /usr/share/applications | grep -i resolve
+# If the name differs, rename this file to match and re-run `chezmoi apply`.

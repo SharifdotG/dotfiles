@@ -1,4 +1,10 @@
-# Desktop / GUI. KDE Plasma on CachyOS.
+# Desktop / GUI. KDE Plasma on CachyOS. Installed on BOTH machines.
+#
+# NB: "desktop" here means the graphical SESSION, not the desktop machine.
+# The machine-role manifests are gaming.tsv and creative.tsv, and the
+# hardware ones are cpu-*.tsv and gpu-*.tsv. This file predates all of them
+# and the name is now ambiguous; do not "fix" it by moving desktop-machine
+# packages in here.
 #
 # NB: this list does NOT include Plasma itself. The CachyOS KDE edition installs
 # the workspace, SDDM/plasmalogin, Breeze, the portal and the core KDE apps at
@@ -56,7 +62,11 @@ chatgpt-desktop	skip	chatgpt-desktop	skip	OpenAI's official Linux binary, repack
 # both written by the kde-theme script. See the long note there.
 fluent-icon-theme	skip	fluent-icon-theme	skip	vinceliuice's Fluent icons. The AUR package IS the official install - its PKGBUILD runs upstream's own install.sh --all against a pinned release tag, which is exactly what you would run by hand, minus the untracked files in ~/.local/share/icons. Prefer it over fluent-icon-theme-git: -git rebuilds on every push
 # -- hardware ---------------------------------------------------------------
-intel-media-driver	intel-media-driver	skip	skip	VA-API for UHD 620; LIBVA_DRIVER_NAME=iHD is set in environment.d
-libva-utils	libva-utils	skip	skip	provides `vainfo`
+# NB: intel-media-driver moved to packages/gpu-intel.tsv - it is a GPU fact,
+# and setting LIBVA_DRIVER_NAME=iHD on an AMD card kills VA-API outright.
+# libva-utils stays here because `vainfo` is vendor-neutral and doctor.sh
+# needs it on both machines.
+libva-utils	libva-utils	skip	skip	provides `vainfo`, which is how doctor.sh proves VA-API actually initialised rather than that a driver package is installed
+vulkan-tools	vulkan-tools	skip	skip	provides `vulkaninfo`. Vendor-neutral and needed on BOTH machines: a missing Vulkan driver does not error, the loader silently falls back to llvmpipe, and vulkaninfo is the only way to see which one you got
 bluez-utils	bluez-utils	skip	skip
 wl-clipboard	wl-clipboard	skip	skip	CLI clipboard access; Plasma's Klipper handles the GUI side

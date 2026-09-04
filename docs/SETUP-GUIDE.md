@@ -11,6 +11,14 @@ see Phase 1.
 **Workload:** Docker, Angular/Nx monorepos, microservices, nopCommerce (.NET + PostgreSQL)
 **Curated by SharifdotG · Revised for low-RAM stability**
 
+> **This guide is the laptop's.** The repo now also configures a Ryzen 5 3600 desktop, and
+> the hardware-specific values below — the VA-API driver name, `thermald`, the fontconfig
+> rasterisation block, Ghostty's font size and scroll step — are selected per machine by
+> `lib/detect.sh` rather than being fixed. Everything in **Phase 4 (Memory & Anti-Freeze)**
+> is shared verbatim: both machines have 16 GB, so every number there was already correct
+> for both. For what differs — BIOS, keeping the NTFS storage disk, gaming, LACT, DaVinci
+> Resolve's ROCm pin, Affinity under Wine — see **`docs/DESKTOP.md`**.
+
 > **The one thing to take from this guide, stated up front.** Measured on this machine, the
 > entire Plasma session — compositor, shell, panel, every KDE daemon — costs **0.58 GiB**.
 > Firefox alone costs **8.13 GiB**. The desktop environment is not where your memory goes,
@@ -158,6 +166,9 @@ sudo reboot
 ```
 
 ### 🔋 Power management
+
+> Laptop only. The desktop has no battery and no `power-profiles-daemon` story worth
+> telling; what it has instead is a GPU fan curve, which is `docs/DESKTOP.md` Phase 3.
 
 **Do not run TLP and `power-profiles-daemon` together** — they fight over the same knobs.
 

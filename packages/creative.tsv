@@ -1,0 +1,18 @@
+# Creative / media. Included only when $PROFILE is desktop; --no-creative opts out.
+#
+# NB: the Wine stack that Affinity needs is in gaming.tsv, not here - it is the
+# same wine/wine-mono/wine-gecko/winetricks set, and duplicating rows across
+# manifests would install it twice in the pacman transaction for no reason.
+# Affinity itself is NOT packaged: it needs your own installers and a GUI, so
+# it is a documented one-time manual step. See docs/DESKTOP.md.
+#
+# NB: DaVinci Resolve on this hardware has TWO hard limits, and neither is a
+# bug you can fix:
+#   1. The free version on Linux cannot decode OR encode H.264/H.265 at all.
+#      That is a licensing limit. Transcode to DNxHR with ffmpeg, or buy Studio.
+#   2. AMD dropped Polaris/gfx803 from ROCm after 5.7, and the repos now ship
+#      rocm-opencl-runtime 7.x - which gives Resolve no OpenCL device, so it
+#      will not start. scripts/resolve-opencl.sh pins the runtime back to 5.7.1
+#      and proves it with clinfo. Run it before launching Resolve the first time.
+#id	arch	aur	nix	notes
+davinci-resolve	skip	davinci-resolve	skip	the free edition. The AUR package only repackages Blackmagic's own installer, so the download is manual-ish and large. Launch it through ~/.local/bin/resolve, which sets ROC_ENABLE_PRE_VEGA=1 - Polaris needs it and setting it globally would affect every other OpenCL consumer

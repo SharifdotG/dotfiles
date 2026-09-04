@@ -1,0 +1,8 @@
+# AMD CPU only. Selected by $CPU_VENDOR in bootstrap.sh, not by machine.
+#
+# NB: there is no AMD counterpart to thermald and none is needed - k10temp is
+# in-tree and the SMU manages boost itself. What AMD desktops DO need is a
+# sensor driver the kernel does not ship, below.
+#id	arch	aur	nix	notes
+lm_sensors	lm_sensors	skip	skip	`sensors` and the detection helper. On its own it finds k10temp (CPU die) and nothing else - fan RPM and board voltages need the driver on the next row
+nct6687d-dkms-git	skip	nct6687d-dkms-git	skip	out-of-tree driver for the Nuvoton chip on MSI B450/B550 boards (B450M Mortar MAX included). The IN-TREE nct6683 binds the same chip but is read-only and reports nothing useful; nct6687 is the one that exposes fan1_input and pwm control. system/apply.sh installs the modules-load.d drop-in that actually loads it. NB: DKMS, so it rebuilds on every kernel bump - if `sensors` goes quiet after an update, check `dkms status` first

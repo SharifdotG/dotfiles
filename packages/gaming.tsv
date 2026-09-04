@@ -1,0 +1,27 @@
+# Gaming. Included only when $PROFILE is desktop; --no-gaming opts out.
+#
+# NB: "desktop" here means the desktop MACHINE. packages/desktop.tsv is a
+# different thing entirely - it means the graphical session and is installed on
+# both machines. The collision is unfortunate and predates this file.
+#
+# NB: multilib must be enabled for any of the lib32-* rows to resolve. CachyOS
+# enables it by default; doctor.sh checks the live repo list rather than
+# trusting pacman.conf, because a missing multilib presents as "steam: command
+# not found" long after the bootstrap that skipped it.
+#id	arch	aur	nix	notes
+steam	steam	skip	skip	from multilib. NB: keep game libraries on the NVMe - Steam does not support NTFS libraries and Proton breaks on its case-insensitivity and lack of symlinks, so the 1 TB storage disk is the wrong place for them
+steam-devices	steam-devices	skip	skip	udev rules for controllers; without it a gamepad is visible to root only
+gamemode	gamemode	skip	skip	flips the CPU governor and I/O priority for the duration of a game. Configured per-user by home/private_dot_config/gamemode.ini
+lib32-gamemode	lib32-gamemode	skip	skip	the 32-bit half - a 32-bit game cannot load the 64-bit library and gamemode silently does nothing
+mangohud	mangohud	skip	skip	Vulkan/OpenGL overlay. Also the fastest way to catch a game that fell back to llvmpipe
+lib32-mangohud	lib32-mangohud	skip	skip	the 32-bit half
+gamescope	gamescope	skip	skip	Valve's micro-compositor. On an RX 570 the real lever is rendering at 720p and letting gamescope upscale to the 1080p panel (-w 1280 -h 720 -W 1920 -H 1080 -F fsr)
+lutris	lutris	skip	skip	non-Steam game manager; also the least painful way to drive a Wine prefix by hand
+wine	wine	skip	skip	stock Wine. NB: this is also what Affinity needs - v2 runs on stock Wine 10.17+ and no longer requires the patched ElementalWarrior fork. See docs/DESKTOP.md
+wine-mono	wine-mono	skip	skip	.NET for Wine; Affinity's installer wants it
+wine-gecko	wine-gecko	skip	skip	the embedded browser half of the same
+winetricks	winetricks	skip	skip	prefix surgery - fonts, runtimes, DLL overrides
+lib32-alsa-plugins	lib32-alsa-plugins	skip	skip	32-bit audio for old titles
+lib32-libpulse	lib32-libpulse	skip	skip	the same, via the PulseAudio API that PipeWire implements
+protonup-qt	protonup-qt	skip	skip	installs and manages Proton-GE builds. On Polaris the Proton version is often the difference between a game running and not
+umu-launcher	umu-launcher	skip	skip	runs non-Steam games under Proton with Steam's runtime container, which is what Lutris now shells out to

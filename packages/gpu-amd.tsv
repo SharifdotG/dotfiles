@@ -1,0 +1,21 @@
+# AMD GPU only. Selected by $GPU in bootstrap.sh, not by machine.
+#
+# NB: there is no libva-mesa-driver or mesa-vdpau row here and their absence is
+# deliberate - both were folded into `mesa` upstream and no longer exist as
+# packages. Adding them back trips the "not in any repo" warning in
+# bootstrap.sh and installs nothing.
+#
+# NB: the 32-bit halves are not optional on a machine that runs Steam. A
+# missing lib32 Vulkan driver does not error - the loader silently falls back
+# to llvmpipe and the game renders on the CPU at single-digit FPS. That is the
+# exact silent-substitution failure this repo exists to catch, so doctor.sh
+# asserts the ICD is RADV and not llvmpipe.
+#id	arch	aur	nix	notes
+vulkan-radeon	vulkan-radeon	skip	skip	RADV, the Mesa Vulkan driver. Polaris (RX 570, gfx803) is fully supported
+lib32-vulkan-radeon	lib32-vulkan-radeon	skip	skip	the 32-bit half. Required by Steam and by every pre-2020 game running under Proton
+lib32-mesa	lib32-mesa	skip	skip	32-bit OpenGL. Same reasoning as above
+vulkan-mesa-layers	vulkan-mesa-layers	skip	skip	device-select and overlay layers Mesa ships separately
+lib32-vulkan-mesa-layers	lib32-vulkan-mesa-layers	skip	skip	the 32-bit half
+clinfo	clinfo	skip	skip	provides `clinfo`, the only honest way to ask whether an OpenCL device actually exists. DaVinci Resolve lives or dies on this - see scripts/resolve-opencl.sh
+radeontop	radeontop	skip	skip	live GPU utilisation; the amdgpu answer to intel_gpu_top
+lact	lact	skip	skip	Linux AMDGPU Controller: fan curve, power limit, clocks. Polaris is supported. Needs amdgpu.ppfeaturemask=0xffffffff, which system/apply.sh sets via modprobe.d rather than the bootloader

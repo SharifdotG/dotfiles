@@ -3,7 +3,7 @@
 <!--
   System font policy. Two jobs, kept separate below:
     1. WHICH font answers the generic families (sans-serif / serif / monospace)
-    2. HOW glyphs are rasterised on this laptop's panel
+    2. HOW glyphs are rasterised, per panel density
 
   NB: this file is the fontconfig half only. Plasma does NOT read it to pick its
   own UI font - KDE stores that in kdeglobals, and it is set alongside this by
@@ -92,20 +92,42 @@
   <alias><family>system-ui</family><prefer><family>Adwaita Sans</family></prefer></alias>
   <alias><family>ui-monospace</family><prefer><family>CaskaydiaCove Nerd Font</family></prefer></alias>
 
-  <!-- ── 2. Rasterisation, tuned for the T490s panel ────────────────────────
+  <!-- ── 2. Rasterisation, per panel ────────────────────────────────────────
 
-       14" 1920x1080 = ~157 ppi. High enough that heavy hinting hurts more than
-       it helps, low enough that subpixel rendering still buys real sharpness.
-       That combination is what every value below is chosen for.
+       Two machines, two densities, and the values below are chosen for the
+       density - not for the machine:
+
+         laptop   14" 1920x1080  = ~157 ppi
+         desktop  21.5" 1920x1080 = ~102 ppi (primary, right)
+                  18.5" 1366x768  = ~85 ppi  (secondary, left)
+                  both at 100% scale, so one setting has to serve both
+
+       NB: it is the same setting on both machines today, and that is a
+       finding, not laziness - see the hintstyle note below. The block is
+       templated anyway because the reasoning differs at each end and the
+       desktop is the density where someone WILL want to flip it.
   -->
   <match target="font">
     <edit name="antialias" mode="assign"><bool>true</bool></edit>
 
+{{- if eq .profile "laptop" }}
     <!-- hintslight, NOT hintfull. Full hinting snaps stems to the pixel grid,
          which at 157 ppi visibly distorts letterforms and wrecks spacing.
          Slight hinting only aligns vertically, keeping the designed shape -
          and it is what Adwaita Sans (an Inter derivative) and Cascadia
          Code are both drawn for. hintnone would be blurry. -->
+{{- else }}
+    <!-- Still hintslight at ~85-102 ppi, which is NOT the obvious answer -
+         low DPI is exactly where full hinting is traditionally recommended.
+         It loses here for two reasons that are specific to this stack:
+         autohint is off (below), so hintfull hands the work to each font's
+         own bytecode interpreter, and both fonts in use are drawn for slight
+         hinting; and Qt/Plasma render with subpixel POSITIONING, which
+         hintfull's integer stem snapping fights rather than helps.
+         If text looks soft on the 18.5" panel, this const is the one knob to
+         change - hintfull, nothing else. Change it and re-log-in; fontconfig
+         is read at process start, so already-running apps will not update. -->
+{{- end }}
     <edit name="hinting" mode="assign"><bool>true</bool></edit>
     <edit name="hintstyle" mode="assign"><const>hintslight</const></edit>
 
@@ -115,15 +137,21 @@
          and I don't know why" setting. -->
     <edit name="autohint" mode="assign"><bool>false</bool></edit>
 
-    <!-- Subpixel rendering. rgb is correct for this panel's stripe order;
-         on a rotated display it would need to change (or drop to "none").
-         lcddefault is the light FIR filter that kills the colour fringing
-         subpixel AA otherwise leaves on stem edges. -->
+    <!-- Subpixel rendering. rgb is the stripe order on every panel this repo
+         has met - the T490s eDP, and both desktop monitors. On a ROTATED
+         display it would need vrgb, or "none". lcddefault is the light FIR
+         filter that kills the colour fringing subpixel AA otherwise leaves on
+         stem edges.
+         NB: fontconfig cannot vary this per output. It is a process-wide
+         setting, so a mixed-orientation setup has to pick one or turn
+         subpixel off entirely. Both desktop monitors are landscape, so rgb
+         is right for both. -->
     <edit name="rgba" mode="assign"><const>rgb</const></edit>
     <edit name="lcdfilter" mode="assign"><const>lcddefault</const></edit>
 
-    <!-- Some fonts carry low-res bitmap strikes for small sizes. On a 157 ppi
-         panel those are always worse than rendering the outline. -->
+    <!-- Some fonts carry low-res bitmap strikes for small sizes. Those strikes
+         were drawn for ~96 ppi CRT-era screens and are worse than the outline
+         at every density in use here, 157 and 102 alike. -->
     <edit name="embeddedbitmap" mode="assign"><bool>false</bool></edit>
   </match>
 

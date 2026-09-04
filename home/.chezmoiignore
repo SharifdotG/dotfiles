@@ -31,3 +31,20 @@
 .npmrc
 .nuget
 .docker/config.json
+
+# ── Desktop machine only ─────────────────────────────────────────────────────
+# NB: .chezmoiignore is processed as a TEMPLATE whether or not it ends in
+# .tmpl, so this needs no rename. The patterns are TARGET paths (.config/...),
+# never source names (private_dot_config/...).
+#
+# NB: the condition is `ne .profile "desktop"`, not `eq ... "laptop"`. If the
+# profile key is ever something unexpected, the safe answer is "do not write
+# gaming and video-editing config into that machine's home directory", and only
+# the `ne` form gives that. The `eq` form would write them on every machine
+# that is not literally named laptop.
+{{- if ne .profile "desktop" }}
+.config/MangoHud
+.config/gamemode.ini
+.local/bin/resolve
+.local/share/applications/com.blackmagicdesign.resolve.desktop
+{{- end }}

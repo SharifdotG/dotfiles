@@ -1,0 +1,10 @@
+# Intel CPU only. Selected by $CPU_VENDOR in bootstrap.sh, not by machine.
+#
+# NB: these rows lived in reliability.tsv until the desktop arrived, where they
+# are not merely useless but actively noisy - thermald refuses to start on an
+# AMD CPU, so system/apply.sh warned "could not enable thermald.service" on
+# every single run and nothing in doctor.sh ever noticed. Splitting by CPU
+# vendor is what makes that silence impossible.
+#id	arch	aur	nix	notes
+thermald	thermald	skip	skip	Intel's thermal daemon. Whiskey Lake (i5-8365U) is exactly its target platform. It has no AMD support at all - do not move this back into reliability.tsv
+intel-lpmd	skip	skip	skip	NOT installed: intel_lpmd(8) is for hybrid P-core/E-core CPUs. The i5-8365U is 4 homogeneous cores with no E-cores, so its default config selects a cpuset that does not exist here. Do not "fix" this back in.

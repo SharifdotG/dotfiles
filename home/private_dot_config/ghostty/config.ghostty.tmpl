@@ -75,7 +75,26 @@
 # scripts/doctor.sh now runs exactly that, because this failed silently for
 # weeks.
 font-family = CaskaydiaCove Nerd Font
+{{ if eq .profile "laptop" -}}
+# 10 at ~157 ppi with Plasma at 125%. See the desktop branch for why this is
+# not one number.
 font-size = 10
+{{- else -}}
+# 12 at ~102 ppi with Plasma at 100%. NB: a point is supposed to be a physical
+# unit, so "the same font-size looks the same everywhere" - it does not, because
+# Plasma's scale factor multiplies it and the two machines run different
+# factors. 10 x 1.25 on the laptop and 12 x 1.0 here land in the same place.
+# If you change the desktop's Plasma scale, change this with it.
+#
+# NB: on the desktop this line does NOT appear in `ghostty +show-config`, and
+# that is fine - 12 is Ghostty's own default (`ghostty +show-config --default`
+# confirms it), and the header above explains that show-config omits anything
+# matching a default. So the desktop hits the one case where "absent" is
+# indistinguishable from "silently rejected". Verified the honest way instead:
+# setting 13 makes the key appear, setting __bogus__ makes it vanish - so the
+# file IS parsed and 12 IS accepted. Do not "fix" its absence.
+font-size = 12
+{{- end }}
 
 # NB: only two features, and that is deliberate. This list carried 16 entries
 # when the font was Maple Mono (cv03, cv05, cv09, cv10, cv61, cv38, cv42, cv43,
@@ -368,7 +387,16 @@ confirm-close-surface = false
 # Echoed back = accepted. Absent = invalid (or identical to the default).
 # Confirmed accepted: precision:0.5, 0.25, 0.1. Rejected: precision:bogus.
 # Go to 0.25 if 0.5 is still faster than you want.
+{{ if eq .profile "laptop" -}}
 mouse-scroll-multiplier = precision:0.5,discrete:1
+{{- else -}}
+# discrete:3 on the desktop. The precision track is unchanged - it is the same
+# hi-res-wheel path - but `discrete` is the notched-wheel one, and the 1 above
+# was chosen against a touchpad, which never takes that branch at all. One line
+# per detent on an actual mouse wheel is punishing; 3 is the conventional
+# default that Ghostty's own `discrete:1` was lowered FROM.
+mouse-scroll-multiplier = precision:0.5,discrete:3
+{{- end }}
 
 # NB: three settings were CHECKED and then deliberately NOT written here,
 # because Ghostty's defaults already do the right thing and restating a default

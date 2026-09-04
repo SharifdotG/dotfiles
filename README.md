@@ -1,15 +1,34 @@
 # dotfiles
 
-Configuration for a CachyOS + KDE Plasma developer laptop (ThinkPad T490s), built around one
-constraint: **16 GB of RAM against Docker, Angular/Nx, .NET and a browser.**
+Configuration for **two** CachyOS + KDE Plasma machines — a ThinkPad T490s and a Ryzen
+desktop — built around one constraint they happen to share: **16 GB of RAM against Docker,
+Angular/Nx, .NET and a browser.**
+
+| | laptop | desktop |
+|---|---|---|
+| CPU | i5-8365U · 4C/8T · Whiskey Lake | Ryzen 5 3600 · 6C/12T · Zen 2 |
+| GPU | Intel UHD 620 | Radeon RX 570 8 GB (Polaris) |
+| RAM | 16 GB | 16 GB DDR4-2400 |
+| Disk | 238 GB NVMe | 500 GB NVMe + 1 TB HDD (NTFS, kept) |
+| Display | 14" 1080p @ 125% | 21.5" 1080p + 18.5" 768p, both @ 100% |
+| Extra | — | Steam, DaVinci Resolve, Affinity under Wine |
+
+Because the RAM is the same on both, **the load-bearing half of this repo is identical on
+both machines** — every value in `system/` (swappiness 180, zram, earlyoom, the 6 GiB
+browser cap) was derived from 15.3 GiB usable and needs no per-machine variant. What
+actually differs is hardware vendor and role, and only that is split.
 
 That constraint is more binding than it sounds, and it points somewhere unexpected. Measured
-on this machine: the browser held an **8.13 GiB** working set against 15.3 GiB of usable RAM
+on the laptop: the browser held an **8.13 GiB** working set against 15.3 GiB of usable RAM
 (Firefox at the time; Brave Origin measures lower but the web apps inside it cost the same),
 while the entire Plasma session — compositor, shell, panel, every KDE daemon — is
-**0.58 GiB**. The desktop was never where the memory went, which is why almost everything
-here is about the browser, the containers and the kernel, and almost none of it is about the
-desktop environment.
+**0.58 GiB**. The desktop *environment* was never where the memory went, which is why almost
+everything here is about the browser, the containers and the kernel, and almost none of it
+is about Plasma.
+
+(That word does double duty in this repo now, so: "desktop" means the graphical session in
+`packages/desktop.tsv` and on both machines, and means the Ryzen tower in `PROFILE=desktop`.
+The manifests for the machine are `gaming.tsv` and `creative.tsv`, never `desktop.tsv`.)
 
 That is worth stating plainly because this repo briefly got it wrong: it targeted a minimal
 tiling compositor specifically to save RAM, on the strength of a published figure that put
@@ -22,6 +41,42 @@ git clone <this-repo> ~/dotfiles && ~/dotfiles/bootstrap.sh
 
 `bootstrap.sh` is idempotent — re-running it is the normal update path. It refuses to run
 on anything that is not Arch-derived; see `docs/MIGRATION.md` for how the machine got here.
+
+### How the two machines are told apart
+
+**Not by hostname.** This repo is public, and a hostname is inventory disclosure even though
+it is not a credential — the same reason the private git forge is prompted at `chezmoi init`
+rather than committed. Instead `lib/detect.sh` reads three facts from the kernel:
+
+| Variable | Values | Read from |
+|---|---|---|
+| `PROFILE` | `laptop` / `desktop` | `/sys/class/dmi/id/chassis_type`, falling back to `/sys/class/power_supply/BAT*` |
+| `CPU_VENDOR` | `intel` / `amd` | `vendor_id` in `/proc/cpuinfo` |
+| `GPU` | `intel` / `amd` / `nvidia` / `none` / `mixed` | PCI vendor id in `/sys/class/drm/card*/device/vendor` |
+
+Three variables and not one, deliberately: `thermald` is an Intel-**CPU** fact and
+`LIBVA_DRIVER_NAME` is a **GPU** fact. Neither is a "laptop" fact, and folding them into a
+single profile name is how the next machine silently gets the wrong driver.
+
+A fresh machine is therefore correct with no setup step. Override with
+`--profile=desktop`, with `DOTFILES_PROFILE` / `DOTFILES_CPU_VENDOR` / `DOTFILES_GPU`, or by
+putting one word in `/etc/dotfiles-profile`. The environment overrides also mean the machine
+you are *not* sitting at can be reviewed from the one you are:
+
+```bash
+DOTFILES_PROFILE=desktop DOTFILES_CPU_VENDOR=amd DOTFILES_GPU=amd ./bootstrap.sh --dry-run
+```
+
+What each axis selects:
+
+| Axis | Packages | Config |
+|---|---|---|
+| `CPU_VENDOR` | `packages/cpu-{intel,amd}.tsv` | `thermald` enabled only on Intel |
+| `GPU` | `packages/gpu-{intel,amd}.tsv` | `LIBVA_DRIVER_NAME`; `amdgpu.ppfeaturemask`; `lactd` |
+| `PROFILE` | `packages/{gaming,creative}.tsv` on desktop | font sizes, scroll step, MangoHud, gamemode, the Resolve wrapper |
+
+Everything else — `core`, `dev`, `reliability`, `desktop` (which means the graphical
+*session*, on both machines) — is shared.
 
 **The repo clones anywhere, including Windows and macOS** — it just will not *bootstrap*
 anywhere but Arch. That distinction had to be fixed on 2026-09-04, because it was not true:
@@ -67,6 +122,7 @@ binary that plainly exists. Everything is normalised to LF.
 | `docs/SETUP-GUIDE.md` | The long-form guide. This repo is its executable half. |
 | `docs/MIGRATION.md` | The one-time move off Fedora KDE. A runbook, not a reference. |
 | `docs/BACKUP.md` | Backup and restore: the databases, the `.env` files, and every agent's MCP + skills. |
+| `docs/DESKTOP.md` | The desktop machine: BIOS, keeping the NTFS disk, gaming, LACT, Resolve's ROCm pin, Affinity under Wine. |
 
 ## After bootstrap
 

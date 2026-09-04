@@ -3,8 +3,13 @@
 #
 #   git clone <this repo> ~/dotfiles && ~/dotfiles/bootstrap.sh
 #
-# Flags: --dry-run  --no-packages  --no-desktop  --force
+# Flags: --dry-run  --no-packages  --no-desktop  --no-gaming  --no-creative
+#        --profile=laptop|desktop  --force
 # Idempotent: safe to re-run, and re-running is the normal update path.
+#
+# Two machines share this repo. Which one you are on is DETECTED from the
+# hardware (see lib/detect.sh), never from a hostname - so a fresh machine is
+# correct with no setup step. --profile forces it; so does DOTFILES_PROFILE.
 set -uo pipefail
 cd "$(dirname "$0")"
 REPO="$PWD"
@@ -12,11 +17,17 @@ REPO="$PWD"
 . lib/detect.sh
 . lib/pkg.sh
 
-DRY=0 NO_PKGS=0 NO_DESKTOP=0 FORCE=0
+DRY=0 NO_PKGS=0 NO_DESKTOP=0 NO_GAMING=0 NO_CREATIVE=0 FORCE=0
 for a in "$@"; do case "$a" in
   --dry-run)     DRY=1 ;;
   --no-packages) NO_PKGS=1 ;;
   --no-desktop)  NO_DESKTOP=1 ;;
+  --no-gaming)   NO_GAMING=1 ;;
+  --no-creative) NO_CREATIVE=1 ;;
+  # NB: exported, not a local, because lib/detect.sh reads DOTFILES_PROFILE as
+  # the highest-precedence source. One code path decides the profile, and it
+  # lives in detect.sh - this flag just feeds it.
+  --profile=*)   export DOTFILES_PROFILE="${a#*=}" ;;
   --force)       FORCE=1 ;;
   # NB: derived, not a hardcoded line range. This was `sed -n '2,12p'`, which
   # printed five lines of shell (set -uo pipefail, the cd, the sources) once the
@@ -44,8 +55,23 @@ detect_all
 UI_STEPS=3
 [ -x "os/$DISTRO/prep.sh" ] && UI_STEPS=$((UI_STEPS + 1))
 [ "$NO_PKGS" -eq 0 ]        && UI_STEPS=$((UI_STEPS + 1))
-banner "dotfiles" "$DISTRO · $DESKTOP · re-running this is the normal update path"
+banner "dotfiles" "$DISTRO · $PROFILE · re-running this is the normal update path"
 info "$DISTRO / desktop=$DESKTOP / session=$SESSION_TYPE / vm=$IS_VM"
+info "profile=$PROFILE / cpu=$CPU_VENDOR / gpu=$GPU"
+case "$PROFILE" in
+  laptop|desktop) ;;
+  *) die "unknown profile '$PROFILE' - expected laptop or desktop.
+       Detection reads /sys/class/dmi/id/chassis_type and
+       /sys/class/power_supply/. Override with --profile=desktop or by
+       putting one word in /etc/dotfiles-profile." ;;
+esac
+# NB: not fatal. A GPU this does not recognise still gets core, dev and the
+# desktop set - it just gets no vendor manifest and no VA-API driver name. Say
+# so rather than dying, because that machine is still usable.
+case "$GPU" in
+  none|mixed) warn "GPU detected as '$GPU' - no packages/gpu-*.tsv will be selected" ;;
+esac
+
 # This repo used to carry a fedora column too. It does not any more - the
 # package names and the /etc drop-ins are CachyOS specific. Fail here rather
 # than half-installing Arch names on something else.
@@ -72,9 +98,31 @@ if [ "$NO_PKGS" -eq 0 ]; then
   # NB: this used to be `[ "$DESKTOP" != none ] && MANIFESTS+=(desktop.tsv)`.
   # On a fresh install bootstrapped from a TTY, XDG_CURRENT_DESKTOP is unset,
   # so DESKTOP=none and the machine silently came up with no browser and no
-  # terminal - with no error. This repo targets exactly one laptop and that
-  # laptop has a GUI, so the desktop set is now the default.
+  # terminal - with no error. Both machines this repo targets have a GUI, so
+  # the desktop set is the default.
+  # NB: packages/desktop.tsv is the graphical SESSION, on both machines. The
+  # desktop MACHINE's extra sets are gaming.tsv and creative.tsv, below.
   [ "$NO_DESKTOP" -eq 1 ] || MANIFESTS+=(packages/desktop.tsv)
+
+  # Hardware axes. Separate from the profile on purpose: thermald is an
+  # Intel-CPU fact and the VA-API driver is a GPU fact, and neither is a
+  # "laptop" fact. Missing file = nothing to add, which is the correct answer
+  # for an unrecognised vendor rather than an error.
+  for m in "packages/cpu-$CPU_VENDOR.tsv" "packages/gpu-$GPU.tsv"; do
+    [ -f "$m" ] && MANIFESTS+=("$m")
+  done
+
+  # Role axis. Only the desktop machine gets these.
+  if [ "$PROFILE" = desktop ]; then
+    [ "$NO_GAMING" -eq 1 ]   || MANIFESTS+=(packages/gaming.tsv)
+    [ "$NO_CREATIVE" -eq 1 ] || MANIFESTS+=(packages/creative.tsv)
+  fi
+
+  info "manifests: ${MANIFESTS[*]#packages/}"
+  # NB: the stamp is a hash of the manifest CONTENTS, so it needs no profile in
+  # its key - a different machine selects a different file list and therefore
+  # hashes differently. $STAMPS is already under XDG_STATE_HOME, which is
+  # per-machine anyway.
   h=$(hash_of "${MANIFESTS[@]}")
 
   mapfile -t PKGS < <(pkg_resolve arch "${MANIFESTS[@]}")
@@ -201,14 +249,34 @@ if ! command -v chezmoi >/dev/null; then
   export PATH="$HOME/.local/bin:$PATH"
 fi
 if command -v chezmoi >/dev/null; then
+  CHEZMOI_TOML="${XDG_CONFIG_HOME:-$HOME/.config}/chezmoi/chezmoi.toml"
   if [ -d "${XDG_CONFIG_HOME:-$HOME/.config}/chezmoi" ]; then
+    # NB: a machine set up before the laptop/desktop split has a stored
+    # chezmoi.toml with no `profile` key, and `chezmoi apply` would then abort
+    # with "map has no entry for key" the moment it hit a template that reads
+    # .profile - on a machine that was working five minutes earlier. `chezmoi
+    # init` re-renders the config from .chezmoi.toml.tmpl; promptStringOnce
+    # keeps every answer already stored, so this only ADDS the new keys and
+    # asks nothing. Idempotent, and a no-op once the key is there.
+    if ! grep -q '^[[:space:]]*profile[[:space:]]*=' "$CHEZMOI_TOML" 2>/dev/null; then
+      info "stored chezmoi config predates the machine profile - re-running init"
+      run chezmoi init --source "$REPO" \
+        --promptString "profile=$PROFILE" --promptString "gpu=$GPU"
+    fi
     run chezmoi apply --source "$REPO"
   else
     info "first run - chezmoi will prompt for name/email/desktop"
     # NB: "plasma" is the default and almost certainly what you want.
     # promptStringOnce caches the answer and never asks again, so a carried-over
     # ~/.config/chezmoi/chezmoi.toml keeps whatever the old machine said.
-    run chezmoi init --apply --source "$REPO"
+    #
+    # NB: profile and gpu are PASSED, not prompted. .chezmoi.toml.tmpl can
+    # detect them itself (it shells out to the same sysfs reads), but then two
+    # code paths would decide the same fact and could disagree. Feeding
+    # detect.sh's answer in means there is exactly one decision, made here.
+    # --promptString supplies the value, so promptStringOnce does not ask.
+    run chezmoi init --apply --source "$REPO" \
+      --promptString "profile=$PROFILE" --promptString "gpu=$GPU"
   fi
   ok "home configuration applied"
 fi
@@ -237,4 +305,15 @@ cat <<'EOS'
                                 into the keyring - this is the auth path, not SSH
   ./scripts/doctor.sh         verify everything
 EOS
+if [ "$PROFILE" = desktop ]; then
+cat <<'EOS'
+
+  -- desktop only ------------------------------------------------------------
+  ./scripts/resolve-opencl.sh  pin ROCm to 5.7.1, or DaVinci Resolve sees no
+                               OpenCL device at all - AMD dropped Polaris after
+                               5.7 and the repos ship 7.x
+  docs/DESKTOP.md              mounting the storage disk, Affinity under Wine,
+                               LACT, and why Steam libraries must stay on the NVMe
+EOS
+fi
 rule

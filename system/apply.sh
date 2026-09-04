@@ -16,8 +16,21 @@ DRY=0; [ "${1:-}" = --dry-run ] && DRY=1
 [ "$(id -u)" -eq 0 ] || die "run me with sudo"
 # NB: DESKTOP is unreliable in here - sudo strips XDG_CURRENT_DESKTOP, so
 # detect.sh falls back to pgrep. Do not branch on $DESKTOP in this file.
+#
+# NB: PROFILE, CPU_VENDOR and GPU are safe to branch on and this file does.
+# They are the reason lib/detect.sh reads sysfs and /etc rather than anything
+# under $HOME: sudo sets HOME=/root, so ~/.config/chezmoi - where chezmoi keeps
+# the same answers - is unreachable from here. Overriding for a dry run needs
+# the assignment in front of sudo's command, because env_reset drops it:
+#     sudo DOTFILES_PROFILE=desktop ./system/apply.sh --dry-run
+info "profile=$PROFILE / cpu=$CPU_VENDOR / gpu=$GPU"
 [ "$PKG_COL" = arch ] ||
   die "this repo targets CachyOS (or Arch); detected '$DISTRO' -> column '$PKG_COL'"
+
+# Set by install_file whenever it writes. Read by the initramfs step below,
+# because `mkinitcpio -P` is 30+ seconds and running it on every apply would
+# make the idempotent re-run - the normal update path - feel broken.
+CHANGED=0
 
 install_file() {
   local src="$1" dst="$2" mode="${3:-0644}"
@@ -31,6 +44,7 @@ install_file() {
   fi
   if [ "$DRY" -eq 1 ]; then return; fi
   install -D -m "$mode" "$src" "$dst"
+  CHANGED=1
   ok "wrote      $dst"
 }
 
@@ -70,6 +84,26 @@ install_file systemd/coredump.conf.d/99-size-cap.conf     /etc/systemd/coredump.
 info "Docker daemon (log caps + builder GC)"
 install_file docker/daemon.json                           /etc/docker/daemon.json
 
+# ── hardware-specific ────────────────────────────────────────────────────────
+# NB: keyed on the hardware axes, not on PROFILE alone. ppfeaturemask is an
+# amdgpu fact - it would be inert on an Intel GPU and actively confusing to
+# find in /etc. The sensor module is a desktop-board fact.
+INITRAMFS_STALE=0
+if [ "$GPU" = amd ]; then
+  info "AMD GPU (unlock power management for LACT)"
+  CHANGED=0
+  install_file modprobe.d/99-amdgpu-ppfeaturemask.conf \
+               /etc/modprobe.d/99-amdgpu-ppfeaturemask.conf
+  # `if`, not `[ ... ] && ...`. Same reason as the note further down: this
+  # script runs under `set -e` and a bare test-and-command is exactly the shape
+  # that has bitten it before.
+  if [ "$CHANGED" -eq 1 ]; then INITRAMFS_STALE=1; fi
+fi
+if [ "$PROFILE" = desktop ]; then
+  info "Board sensors (Nuvoton, MSI B450/B550)"
+  install_file modules-load.d/99-nct6687.conf \
+               /etc/modules-load.d/99-nct6687.conf
+fi
 
 [ "$DRY" -eq 1 ] && { info "dry run - nothing written"; exit 0; }
 
@@ -83,16 +117,45 @@ udevadm control --reload >/dev/null 2>&1 && ok "udev rules reloaded" ||
 systemctl daemon-reload            && ok "systemd reloaded"
 systemctl restart systemd-journald && ok "journald restarted"
 
+# NB: only when a modprobe.d file actually changed. mkinitcpio -P is ~30s and
+# this script's whole contract is that re-running it is cheap and boring.
+if [ "$INITRAMFS_STALE" -eq 1 ]; then
+  info "Regenerating the initramfs"
+  # WHY: modprobe options only reach a module that loads from the initramfs if
+  # the file is IN the initramfs. amdgpu loads there (the kms hook), and
+  # mkinitcpio's modconf hook copies /etc/modprobe.d/*.conf in - so the option
+  # is inert until this runs.
+  mkinitcpio -P >/dev/null 2>&1 && ok "initramfs regenerated" ||
+    warn "mkinitcpio -P failed - amdgpu will not pick up ppfeaturemask"
+fi
+
 info "Enabling units Arch ships disabled"
 # NB: Arch's default preset is `disable *` (/usr/lib/systemd/system-preset/).
 # Fedora's presets were enabling all of these for free, so the drop-ins above
 # were only ever corrective there. Here they are additive and inert until the
 # units are actually switched on.
-for u in systemd-oomd.service earlyoom.service fstrim.timer thermald.service \
+for u in systemd-oomd.service earlyoom.service fstrim.timer \
          smartd.service irqbalance.service; do
   enable_unit "$u"
 done
 command -v paccache >/dev/null && enable_unit paccache.timer
+
+# NB: thermald used to be in the list above, unconditionally. It is Intel-only
+# and refuses to start on AMD, so on the desktop every single run of this
+# script printed "could not enable thermald.service" and nothing in doctor.sh
+# ever looked - a warning that appears on every run is a warning nobody reads.
+# Gate it on the CPU instead, and say out loud when it is skipped.
+if [ "$CPU_VENDOR" = intel ]; then
+  enable_unit thermald.service
+else
+  info "skipping thermald.service - Intel only, this CPU is $CPU_VENDOR"
+fi
+
+# LACT's daemon is what applies a saved fan curve at boot; without it the GUI
+# works and nothing persists across a reboot.
+if [ "$GPU" = amd ] && systemctl list-unit-files lactd.service >/dev/null 2>&1; then
+  enable_unit lactd.service
+fi
 
 
 info "zram"
@@ -151,6 +214,26 @@ sw=$(sysctl -n vm.swappiness 2>/dev/null || echo '?')
        check /etc/udev/rules.d/99-zram-swappiness.rules is installed, then
        'udevadm trigger --action=change /sys/block/zram0'.
        Otherwise: 'systemd-analyze cat-config sysctl.d'"
+
+# NB: read the MODULE PARAMETER back, not the file just written - same rule as
+# the swappiness check above, and for a nastier reason. A wrong ppfeaturemask
+# does not error: the sysfs nodes LACT needs are simply absent, so LACT opens,
+# shows correct-looking numbers, and silently cannot change any of them.
+if [ "$GPU" = amd ]; then
+  ppf=$(cat /sys/module/amdgpu/parameters/ppfeaturemask 2>/dev/null || echo '')
+  if [ -z "$ppf" ]; then
+    warn "amdgpu module parameter not readable - is the amdgpu driver loaded?"
+  elif [ "$(printf '%d' "$ppf" 2>/dev/null || echo 0)" -eq 4294967295 ]; then
+    ok "amdgpu ppfeaturemask = $ppf (power management unlocked)"
+  else
+    # Expected on the run that FIRST installs the file: the running kernel
+    # still has the old value and only a reboot picks up the new initramfs.
+    info "amdgpu ppfeaturemask is $ppf, want 0xffffffff - REBOOT to apply.
+       If it is still wrong after a reboot, /etc/modprobe.d never reached the
+       initramfs: check that HOOKS in /etc/mkinitcpio.conf contains 'modconf',
+       or set amdgpu.ppfeaturemask=0xffffffff on the kernel command line."
+  fi
+fi
 
 steps_end
 info "Done. Verify with: scripts/doctor.sh"

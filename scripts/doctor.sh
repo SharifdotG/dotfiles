@@ -51,9 +51,14 @@ fi
 
 _uarch=$(/lib64/ld-linux-x86-64.so.2 --help 2>/dev/null |
          awk '/x86-64-v[0-9] \(supported/ {print $1}' | sort -r | head -1)
-UI_STEPS=11
+# NB: derived, not hardcoded. It was a literal 11, which was right until the
+# desktop added two more sections and the last one printed "[13/11]" - the same
+# small wrongness bootstrap.sh already avoids by counting rather than guessing.
+UI_STEPS=12
+[ "$PROFILE" = desktop ] && UI_STEPS=$(( UI_STEPS + 2 ))
 banner "doctor" "read-only health check · reports, never changes anything"
 info "System: $DISTRO / $DESKTOP / $SESSION_TYPE  (vm: $IS_VM, pkg column: $PKG_COL, ${_uarch:-?})"
+info "Machine: profile=$PROFILE / cpu=$CPU_VENDOR / gpu=$GPU"
 
 step "Platform"
 # NB: a v4 package on a v3 CPU installs cleanly and dies with SIGILL at RUNTIME,
@@ -63,6 +68,61 @@ chk "no v4 repo on a non-v4 CPU"  ok \
   "$(if grep -q '^\[cachyos-v4' /etc/pacman.conf 2>/dev/null && [ "$_uarch" != x86-64-v4 ]; then
        echo MISMATCH; else echo ok; fi)"
 note "cachyos repo tier" "$(grep -oE '^\[cachyos(-v[34])?[a-z-]*\]' /etc/pacman.conf 2>/dev/null | tr -d '[]' | tr '\n' ' ')"
+
+step "GPU & display stack"
+# The whole point of this section: none of these failures ANNOUNCE themselves.
+# A wrong VA-API driver name does not error, it just stops decoding. A missing
+# Vulkan driver does not error, the loader substitutes llvmpipe and the machine
+# renders on the CPU. Both look like "it got slow", never like a broken config.
+
+# NB: chezmoi bakes `gpu` into ~/.config/chezmoi/chezmoi.toml at init and never
+# re-reads the hardware, so swapping a card leaves the stored answer stale and
+# LIBVA_DRIVER_NAME wrong forever. Compare the stored value against a live PCI
+# read. This is the house rule applied to the profile mechanism itself.
+_cmtoml="${XDG_CONFIG_HOME:-$HOME/.config}/chezmoi/chezmoi.toml"
+_bakedgpu=$(sed -n 's/^[[:space:]]*gpu[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' \
+            "$_cmtoml" 2>/dev/null | head -1)
+if [ -z "$_bakedgpu" ]; then
+  note "chezmoi .gpu" "<not set - run: chezmoi init --source \"$PWD\">"
+else
+  chk "chezmoi .gpu matches hardware" "$GPU" "$_bakedgpu"
+fi
+
+# What the APPS actually get. Not $LIBVA_DRIVER_NAME from this shell - that is
+# inherited and would be empty on a TTY even when the setting is fine.
+# environment.d is read by the systemd user manager, so ask the user manager.
+_libva=$(systemctl --user show-environment 2>/dev/null |
+         sed -n 's/^LIBVA_DRIVER_NAME=//p' | head -1)
+case "$GPU" in
+  intel) chk "LIBVA_DRIVER_NAME"  iHD       "${_libva:-<unset>}" ;;
+  amd)   chk "LIBVA_DRIVER_NAME"  radeonsi  "${_libva:-<unset>}" ;;
+  *)     note "LIBVA_DRIVER_NAME" "${_libva:-<unset>} (gpu=$GPU, nothing expected)" ;;
+esac
+
+# NB: and then prove the driver LOADS. Having the name set and having VA-API
+# working are different things - the whole reason environment.d carries that NB.
+if ! command -v vainfo >/dev/null 2>&1; then
+  note "vainfo" "<not installed: pacman -S libva-utils>"
+else
+  _va=$(vainfo 2>/dev/null | sed -n 's/^vainfo: Driver version: //p' | head -1)
+  chk "VA-API initialises"       yes "$([ -n "$_va" ] && echo yes || echo no)"
+  note "  driver" "${_va:-<none - hardware video decode is OFF>}"
+fi
+
+# NB: llvmpipe is the silent-substitution case in its purest form. It is a
+# perfectly working Vulkan implementation, it reports success, and it runs on
+# the CPU. Assert the driver is NOT it rather than asserting a device exists.
+if ! command -v vulkaninfo >/dev/null 2>&1; then
+  note "vulkaninfo" "<not installed: pacman -S vulkan-tools>"
+else
+  _icd=$(vulkaninfo --summary 2>/dev/null |
+         sed -n 's/^[[:space:]]*driverName[[:space:]]*=[[:space:]]*//p' |
+         sort -u | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+  chk "Vulkan driver is not llvmpipe" yes \
+      "$(case "${_icd:-none}" in *llvmpipe*|none) echo no ;; *) echo yes ;; esac)"
+  note "  ICD" "${_icd:-<none>}"
+fi
+note "GPU" "$(lspci -nn 2>/dev/null | sed -n 's/.*\(VGA compatible controller\|3D controller\)[^:]*: //p' | head -1)"
 
 step "Memory pressure defences"
 chk "vm.swappiness"              180      "$(sysctl -n vm.swappiness 2>/dev/null)"
@@ -327,6 +387,126 @@ else
       done
       if [ "$_n" -gt 0 ] && [ "$_in" -eq "$_n" ]; then echo "$_in/$_n"
       else echo "$_in/$_n (restart brave to re-parent the rest)"; fi)"
+fi
+
+# ── desktop machine only ─────────────────────────────────────────────────────
+# NB: gated rather than guarded-per-check. On the laptop these are not "things
+# that failed", they are things that do not exist, and a section full of
+# permanently-grey notes is the kind of noise that teaches people to skim the
+# report. UI_STEPS above accounts for the two extra steps.
+if [ "$PROFILE" = desktop ]; then
+
+step "Desktop hardware"
+# NB: the MODULE PARAMETER, not /etc/modprobe.d. The file being present proves
+# nothing: it only reaches amdgpu if mkinitcpio's modconf hook copied it into
+# the initramfs, and if it did not, LACT opens, shows plausible numbers, and
+# silently cannot change the fan curve.
+if [ "$GPU" = amd ]; then
+  _ppf=$(cat /sys/module/amdgpu/parameters/ppfeaturemask 2>/dev/null || echo '')
+  chk "amdgpu ppfeaturemask" 0xffffffff \
+      "$(if [ -n "$_ppf" ] && [ "$(printf '%d' "$_ppf" 2>/dev/null || echo 0)" -eq 4294967295 ]
+         then echo 0xffffffff; else echo "${_ppf:-<unreadable>}"; fi)"
+  # The knob LACT actually writes. Present only when the mask above took.
+  chk "GPU power-management sysfs" present \
+      "$(ls /sys/class/drm/card*/device/pp_od_clk_voltage >/dev/null 2>&1 &&
+         echo present || echo MISSING)"
+  # NB: capture, then default - do NOT append `|| echo not-found`. For a unit
+  # that does not exist, `systemctl is-enabled` PRINTS "not-found" and EXITS 1,
+  # so the || branch fires too and chk gets a two-line value it can never
+  # match. Identical trap to the packagekit and baloo checks further down.
+  _lactd=$(systemctl is-enabled lactd.service 2>/dev/null)
+  chk "lactd enabled" enabled "${_lactd:-not-found}"
+fi
+
+# NB: loaded is NOT the same as bound. nct6687 inserts happily on a board
+# without the chip and then reports nothing at all, so read SENSORS back rather
+# than lsmod. A fan RPM is the only honest proof the driver found hardware.
+if lsmod 2>/dev/null | grep -q '^nct6687'; then
+  ok "nct6687 module loaded"
+else
+  chk "nct6687 module loaded" yes no
+fi
+_fans=$(sensors 2>/dev/null | grep -ciE '^fan[0-9]+:' || true)
+chk "board reports fan RPM" yes "$([ "${_fans:-0}" -gt 0 ] && echo yes || echo no)"
+note "  fans seen" "${_fans:-0}"
+# Tctl is the AMD die sensor (k10temp). Fall back to whatever the first
+# reported package/core temperature is, so this is never a blank line.
+_temp=$(sensors 2>/dev/null |
+        sed -n 's/^\(Tctl\|Tdie\|Package id 0\|Core 0\):[[:space:]]*+\([0-9.]*\).*/\2 C/p' |
+        head -1)
+note "CPU temp" "${_temp:-<no sensor - is lm_sensors configured?>}"
+
+# NB: the 1 TB storage disk is kept as NTFS on purpose, and ntfs3 mounts a
+# volume READ-ONLY rather than failing when Windows left it dirty (hibernation
+# or Fast Startup). That is silent: writes just start bouncing. Discover the
+# mounts at runtime so no UUID or label ever enters this public repo.
+_ntfs=$(findmnt -rno TARGET,OPTIONS -t ntfs3,ntfs,fuseblk 2>/dev/null || true)
+if [ -z "$_ntfs" ]; then
+  note "NTFS mounts" "<none mounted>"
+else
+  while read -r _t _o; do
+    [ -n "$_t" ] || continue
+    chk "NTFS $_t writable" rw \
+        "$(case ",$_o," in *,rw,*) echo rw ;; *) echo ro ;; esac)"
+  done <<< "$_ntfs"
+fi
+
+step "Gaming & creative stack"
+# NB: multilib is checked against the LIVE repo list, not against pacman.conf.
+# A commented-out multilib does not error at bootstrap - the lib32 names simply
+# get dropped by the "not in any repo" filter with one warning, and the failure
+# surfaces weeks later as a game rendering on the CPU.
+chk "multilib enabled" yes \
+    "$(pacman-conf --repo-list 2>/dev/null | grep -qx multilib && echo yes || echo no)"
+
+# The 32-bit half of the Vulkan stack. A 64-bit-only install runs Steam fine
+# and then falls back to llvmpipe for every 32-bit title.
+if [ "$GPU" = amd ]; then
+  chk "32-bit RADV ICD" present \
+      "$([ -e /usr/share/vulkan/icd.d/radeon_icd.i686.json ] && echo present || echo MISSING)"
+  chk "32-bit RADV library" present \
+      "$(ldconfig -p 2>/dev/null | grep -q 'libvulkan_radeon.so.*libc6,x86-32' &&
+         echo present || echo MISSING)"
+fi
+
+chk "steam installed" yes "$(command -v steam >/dev/null && echo yes || echo no)"
+chk "gamemode user unit" present \
+    "$(systemctl --user list-unit-files gamemoded.service >/dev/null 2>&1 &&
+       systemctl --user list-unit-files gamemoded.service 2>/dev/null |
+       grep -q gamemoded && echo present || echo MISSING)"
+# NB: NOT `gamemoded -s`. That query D-Bus-activates the daemon if it is not
+# running, which would make this script change something - the one thing it
+# promises never to do. Name the command instead; run it while a game is up.
+note "  live check" "gamemoded -s   (run it with a game running)"
+
+# NB: a Steam library on the storage disk is a trap worth catching. Steam does
+# not support NTFS: Proton breaks on its case-insensitivity and missing symlink
+# support, usually as a game that installs fine and then will not launch.
+while read -r _t _o; do
+  [ -n "$_t" ] || continue
+  if [ -d "$_t/steamapps" ] || [ -d "$_t/SteamLibrary" ]; then
+    chk "no Steam library on NTFS ($_t)" ok FOUND-ONE
+  fi
+done <<< "$(findmnt -rno TARGET,OPTIONS -t ntfs3,ntfs,fuseblk 2>/dev/null || true)"
+
+# DaVinci Resolve lives or dies on this single line. AMD dropped Polaris from
+# ROCm after 5.7 and the repos ship 7.x, which enumerates no device at all.
+if ! command -v clinfo >/dev/null 2>&1; then
+  note "OpenCL" "<clinfo not installed: pacman -S clinfo>"
+else
+  _cl=$(ROC_ENABLE_PRE_VEGA=1 clinfo -l 2>/dev/null | grep -c 'Device' || true)
+  chk "OpenCL device visible" yes "$([ "${_cl:-0}" -gt 0 ] && echo yes || echo no)"
+  note "  devices" "${_cl:-0} (Resolve needs at least 1 - see scripts/resolve-opencl.sh)"
+fi
+# NB: and check the PIN is still on. A pacman -Syu that quietly upgraded the
+# runtime back to 7.x is exactly how this breaks again six months from now, so
+# read IgnorePkg out of the LIVE parsed config rather than grepping the file.
+if pacman -Qq rocm-opencl-runtime >/dev/null 2>&1; then
+  note "rocm-opencl-runtime" "$(pacman -Q rocm-opencl-runtime 2>/dev/null | awk '{print $2}')"
+  chk "ROCm held at the pinned version" yes \
+      "$(pacman-conf IgnorePkg 2>/dev/null | grep -qx rocm-opencl-runtime && echo yes || echo no)"
+fi
+
 fi
 
 step "Rollback safety"

@@ -1,0 +1,30 @@
+# Read by the systemd user manager, so this covers everything launched as a
+# unit - which under Plasma is every .desktop app, since KProcessRunner starts
+# them as transient app-*@<hex>.service units.
+#
+# NB: deliberately short. Plasma already sets QT_QPA_PLATFORMTHEME and the
+# cursor/theme variables itself, and duplicating them here only creates a second
+# source of truth that can disagree after a Plasma update. The one thing Plasma
+# does NOT set is the VA-API driver.
+#
+# NB: nothing in this repo set LIBVA_DRIVER_NAME before, even though
+# packages/gpu-intel.tsv carries intel-media-driver "for VA-API on UHD 620".
+# Having the driver installed is not the same as having it selected - verify
+# with `vainfo` after a re-login.
+#
+# NB: and this is now templated because the driver NAME is the other half of
+# the same trap. iHD on an AMD card does not fall back and does not warn - it
+# fails to load and VA-API is simply gone, so every video decodes on the CPU
+# and the only symptom is a hot laptop. The value below follows .gpu, which
+# lib/detect.sh reads from the PCI vendor id; scripts/doctor.sh re-reads it
+# live and checks `vainfo` actually returns a driver.
+{{ if eq .gpu "intel" -}}
+LIBVA_DRIVER_NAME=iHD
+{{- else if eq .gpu "amd" -}}
+LIBVA_DRIVER_NAME=radeonsi
+{{- else -}}
+# .gpu is {{ .gpu | quote }} - no VA-API driver selected on purpose. Setting a
+# name here for a GPU this repo has not been taught would be a guess, and a
+# wrong guess is worse than none: unset means libva probes and finds the right
+# driver itself, which is the correct behaviour for an unknown card.
+{{- end }}
