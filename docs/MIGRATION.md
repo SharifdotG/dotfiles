@@ -228,10 +228,24 @@ directory you can list.
   > **NB — the one thing sync does not carry is extension *data*.** Only the extension list
   > syncs. `Default/Local Extension Settings` (54 MB — uBlock custom filters and friends) is
   > worth a small targeted tar; the other 1.4 GB is not.
-- **Claude Code's MCP servers, skills, rules and settings.** `./scripts/claude-backup.sh export`.
+- **Every agent's MCP servers, skills, rules and settings.** `./scripts/agents-backup.sh export`.
   Nine MCP servers at user scope, four carrying live API keys or bearer tokens (stitch, both
   visual-editor instances, context7); plus `~/.claude/skills`, `rules/`, `settings.json` and the
-  installed-plugin *list*.
+  installed-plugin *list*. Restore fans out to **Claude Code, Codex and Antigravity 2.0** —
+  `~/.claude.json`, `~/.codex/config.toml` (`[mcp_servers.*]`, TOML, in a rewritable managed
+  block) and `~/.gemini/config/mcp_config.json`.
+  > **NB — skills go into `~/.agents/skills` once and are symlinked into all three.** That is
+  > already the pattern this machine uses for 13 of them, and it is the only arrangement where
+  > editing a skill updates every agent instead of leaving three copies to drift.
+  > **NB — this is a repair, not just a restore.** Measured 2026-09-04: **all 27** symlinks in
+  > `~/.gemini/config/skills` are dead. Whatever populated it copied Claude Code's link text
+  > verbatim without adjusting for the extra directory level, so `../../.agents/skills/X`
+  > resolves to `~/.gemini/.agents/...`. Antigravity can currently see only the three skills
+  > that happen to be real directories. The script writes the correct depth and replaces
+  > dangling links without needing `--force`.
+  > **NB — dead servers are skipped by default.** `spartan-ui` and `pencil` point at binaries
+  > that do not exist, and a dead stdio server is a startup error in every agent that loads it.
+  > `--all` keeps them.
   > **NB — `~/.claude/skills` is three different things wearing one directory,** and a plain
   > `tar` gets it wrong. Measured 2026-09-04: 3 real directories, 13 **relative** symlinks into
   > `~/.agents/skills`, and **14 absolute symlinks to `/c/Users/SharifdotG/...`** left over from
@@ -460,7 +474,7 @@ The ordering *is* the content.
     > success nor failure, and the script says which of the three happened rather than printing
     > a tick over a partial load. Read those errors before trusting the database.
 
-    Also `./scripts/claude-backup.sh restore -i ~/Backup/claude` — it backs up `~/.claude.json`
+    Also `./scripts/agents-backup.sh restore -i ~/Backup/claude` — it backs up `~/.claude.json`
     first, and anything already present on the new machine wins over the export unless you pass
     `--force`. Plugins are **not** restored: the cache is 37 MB and some entries still record a
     `C:\Users\...` install path, so the script prints the list for `/plugin install` instead.

@@ -34,7 +34,7 @@ on anything that is not Arch-derived; see `docs/MIGRATION.md` for how the machin
 | `packages/*.tsv` | Logical package id → real name per source (`arch`, `aur`). Plain TSV, parsed with awk. |
 | `os/cachyos/prep.sh` | Repo tier, pacman settings and the AUR helper — everything that must be right *before* packages install. |
 | `system/` | The `/etc` drop-ins that keep the machine from freezing. Applied by an explicit `sudo`. |
-| `scripts/` | `reclaim.sh`, `secrets-setup.sh`, `git-credentials.sh`, `doctor.sh`, and the backup pair `db-backup.sh` / `db-restore.sh` plus `claude-backup.sh`. |
+| `scripts/` | `reclaim.sh`, `secrets-setup.sh`, `git-credentials.sh`, `doctor.sh`, and the backup pair `db-backup.sh` / `db-restore.sh` plus `agents-backup.sh`. |
 | `docs/SETUP-GUIDE.md` | The long-form guide. This repo is its executable half. |
 | `docs/MIGRATION.md` | The one-time move off Fedora KDE. A runbook, not a reference. |
 
@@ -58,7 +58,7 @@ the wipe:
 
 ```bash
 ./scripts/db-backup.sh            # every Postgres -> pg_dump -Fc; other volumes -> tar
-./scripts/claude-backup.sh export # MCP servers, global skills, rules, settings
+./scripts/agents-backup.sh export # MCP servers, global skills, rules, settings
 ```
 
 and after it, on the new machine, once the repos are cloned:
@@ -66,8 +66,23 @@ and after it, on the new machine, once the repos are cloned:
 ```bash
 ./scripts/db-restore.sh ~/Backup/db/<stamp> --list   # read-only: what is in there
 ./scripts/db-restore.sh ~/Backup/db/<stamp>
-./scripts/claude-backup.sh restore -i ~/Backup/claude
+./scripts/agents-backup.sh restore -i ~/Backup/claude
 ```
+
+`agents-backup.sh` exports **once** and restores into **all three agents on this machine** —
+Claude Code, Codex and Antigravity 2.0 — translating the same servers into the shape each one
+actually reads:
+
+| Agent | MCP config | Format |
+|---|---|---|
+| Claude Code | `~/.claude.json` → `.mcpServers` | JSON |
+| Codex | `~/.codex/config.toml` → `[mcp_servers.<name>]` | TOML, in a managed block |
+| Antigravity 2.0 | `~/.gemini/config/mcp_config.json` → `.mcpServers` | JSON |
+
+Skills are installed **once** into `~/.agents/skills` and symlinked into each agent's skills
+directory, so editing a skill updates it everywhere instead of leaving three copies to drift.
+Servers whose stdio command does not exist are skipped by default (`--all` to keep them) —
+a dead server is a startup error in every agent that loads it.
 
 Both outputs contain secrets — the projects' `.env` files, role password hashes, and live
 bearer tokens — and are written `0700`/`0600` outside this tree. Neither belongs on the
