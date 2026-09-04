@@ -252,3 +252,4 @@ step "result"
 info "Free on /:  ${before_disk} MB -> ${after_disk} MB  (reclaimed $((after_disk - before_disk)) MB)"
 info "Resident:   ${before_ram:-0} MB -> ${after_ram:-0} MB  (freed $(( ${before_ram:-0} - ${after_ram:-0} )) MB)"
 info "Verify with: scripts/doctor.sh"
+steps_end

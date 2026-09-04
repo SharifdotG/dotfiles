@@ -7,14 +7,26 @@ cd "$(dirname "$0")/.."
 detect_all
 
 pass=0; fail=0
+# NB: the glyph and colour come from lib/log.sh, which drops both when stdout is
+# not a terminal. This used to hardcode \033[1;32m unconditionally, so a piped
+# or redirected doctor run carried raw escape codes into the log - the one thing
+# lib/log.sh exists to prevent. `note` now comes from the library too, so both
+# line up in the same columns.
 chk() { # chk <label> <expected> <actual>
-  if [ "$2" = "$3" ]; then printf '  \033[1;32m✓\033[0m %-42s %s\n' "$1" "$3"; pass=$((pass+1))
-  else printf '  \033[1;31m✗\033[0m %-42s %s (want: %s)\n' "$1" "$3" "$2"; fail=$((fail+1)); fi
+  if [ "$2" = "$3" ]; then
+    printf '  %s%s%s %s %s\n' "$_C_GREEN" "$_G_OK" "$_C_RESET" "$(ui_leader "$1")" "$3"
+    pass=$((pass+1))
+  else
+    printf '  %s%s%s %s %s %s(want: %s)%s\n' "$_C_RED$_C_BOLD" "$_G_BAD" "$_C_RESET" \
+      "$(ui_leader "$1")" "$3" "$_C_DIM" "$2" "$_C_RESET"
+    fail=$((fail+1))
+  fi
 }
-note() { printf '    %-42s %s\n' "$1" "$2"; }
 
 _uarch=$(/lib64/ld-linux-x86-64.so.2 --help 2>/dev/null |
          awk '/x86-64-v[0-9] \(supported/ {print $1}' | sort -r | head -1)
+UI_STEPS=9
+banner "doctor" "read-only health check · reports, never changes anything"
 info "System: $DISTRO / $DESKTOP / $SESSION_TYPE  (vm: $IS_VM, pkg column: $PKG_COL, ${_uarch:-?})"
 
 step "Platform"
@@ -214,5 +226,7 @@ chk "snap-pac installed"         yes "$(pacman -Qq snap-pac >/dev/null 2>&1 && e
 _snaps=$(sudo -n snapper -c root list 2>/dev/null | grep -cE '^[0-9]')
 note "root snapshots" "${_snaps:-<needs root>}"
 
-printf '\n  %d passed, %d failed\n\n' "$pass" "$fail"
+steps_end
+bar "$pass" $(( pass + fail )) "checks passed"
+# The exit status is the contract - the bar above is decoration on top of it.
 [ "$fail" -eq 0 ]

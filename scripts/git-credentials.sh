@@ -42,6 +42,7 @@ while [ $# -gt 0 ]; do case "$1" in
   *)           die "unknown flag: $1" ;;
 esac; shift; done
 
+banner "git credentials" "a PAT per host, stored in the desktop keyring"
 [ "$(id -u)" -ne 0 ] || die "do not run me as root - these are YOUR credentials"
 command -v git >/dev/null || die "git is required"
 
@@ -226,6 +227,7 @@ if gh_helper=$(git config --get-all 'credential.https://github.com.helper' 2>/de
   warn "if you want the PAT you just stored to be the one git uses."
 fi
 
+steps_end
 step "done"
 cat <<EOS
   Test it without changing anything:

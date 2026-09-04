@@ -75,4 +75,5 @@ else
     ok "BUILDDIR=/var/tmp/makepkg (keeps AUR builds off the tmpfs)"
 fi
 
+steps_end
 ok "CachyOS prep complete"

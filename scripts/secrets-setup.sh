@@ -39,3 +39,4 @@ cat <<'EOS'
   Brave profile                     use Brave Sync (a sync chain, not an account)
   Bitwarden vault                   sign in normally
 EOS
+steps_end

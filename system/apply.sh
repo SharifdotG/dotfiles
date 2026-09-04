@@ -7,6 +7,11 @@ cd "$(dirname "$0")"
 . ../lib/detect.sh
 detect_all
 
+# NB: no UI_STEPS here. This script's two `step` calls are inside
+# install_file(), once per file in --dry-run, not top-level phases - numbering
+# them would count files and print [3/2].
+banner "system" "/etc drop-ins · idempotent · shows a diff before writing"
+
 DRY=0; [ "${1:-}" = --dry-run ] && DRY=1
 [ "$(id -u)" -eq 0 ] || die "run me with sudo"
 # NB: DESKTOP is unreliable in here - sudo strips XDG_CURRENT_DESKTOP, so
@@ -112,4 +117,5 @@ sw=$(sysctl -n vm.swappiness 2>/dev/null || echo '?')
 [ "$sw" = 180 ] && ok "vm.swappiness = 180" ||
   warn "vm.swappiness is $sw, expected 180 - check 'systemd-analyze cat-config sysctl.d'"
 
+steps_end
 info "Done. Verify with: scripts/doctor.sh"

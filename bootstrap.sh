@@ -37,6 +37,14 @@ run()        { if [ "$DRY" -eq 1 ]; then printf '    would run: %s\n' "$*"; else
 [ "$(id -u)" -ne 0 ] || die "do not run me as root; I call sudo only where needed"
 command -v git >/dev/null || die "git is required"
 detect_all
+# UI_STEPS only numbers the step headers; nothing branches on it. Counted from
+# the flags rather than hardcoded to 5, because two of the five are conditional -
+# a hardcoded total prints "[4/5]" as the last step under --no-packages, which is
+# exactly the kind of small wrongness that makes a tool feel careless.
+UI_STEPS=3
+[ -x "os/$DISTRO/prep.sh" ] && UI_STEPS=$((UI_STEPS + 1))
+[ "$NO_PKGS" -eq 0 ]        && UI_STEPS=$((UI_STEPS + 1))
+banner "dotfiles" "$DISTRO · $DESKTOP · re-running this is the normal update path"
 info "$DISTRO / desktop=$DESKTOP / session=$SESSION_TYPE / vm=$IS_VM"
 # This repo used to carry a fedora column too. It does not any more - the
 # package names and the /etc drop-ins are CachyOS specific. Fail here rather
@@ -80,9 +88,17 @@ if [ "$NO_PKGS" -eq 0 ]; then
   # names (base-devel), which are legal targets but are not packages.
   MISSING=()
   if [ "$NO_PKGS" -eq 0 ] && command -v pacman >/dev/null; then
+    # NB: the database read is split out of the comm pipeline ONLY so it can be
+    # spun - it is seconds long on a fresh sync, fully non-interactive, and its
+    # output was already being discarded, which is exactly the shape spin() is
+    # safe for. The comm itself is unchanged.
+    _pkgdb=$(mktemp)
+    spin "reading the package databases" \
+      bash -c '{ pacman -Slq; pacman -Sgq; } 2>/dev/null | sort -u > "$1"' _ "$_pkgdb"
     mapfile -t MISSING < <(comm -23 \
       <(printf '%s\n' "${PKGS[@]}" | sort -u) \
-      <( { pacman -Slq; pacman -Sgq; } 2>/dev/null | sort -u ))
+      "$_pkgdb")
+    rm -f "$_pkgdb"
     if [ "${#MISSING[@]}" -gt 0 ]; then
       warn "${#MISSING[@]} manifest name(s) not in any repo: ${MISSING[*]}"
       warn "continuing without them - fix packages/*.tsv"
@@ -205,7 +221,9 @@ if [ "${SHELL##*/}" != zsh ] && command -v zsh >/dev/null; then
 else ok "already zsh"; fi
 
 # ── 5. what still needs a human ──────────────────────────────────────────────
+steps_end
 step "remaining manual steps"
+rule
 cat <<'EOS'
   sudo ./system/apply.sh      /etc drop-ins + enable the units Arch ships disabled
   sudo usermod -aG docker "$USER"   then log out and back in
@@ -218,3 +236,4 @@ cat <<'EOS'
   ./scripts/git-credentials.sh  store a PAT per host so git stops prompting
   ./scripts/doctor.sh         verify everything
 EOS
+rule
