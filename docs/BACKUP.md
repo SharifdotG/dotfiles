@@ -171,8 +171,10 @@ cd ~/dotfiles
 
 # 4. credentials, BEFORE any clone - SocialHousingOSS is on a private forge
 #    also restore by hand: ~/.npmrc, ~/.nuget/NuGet.Config, ~/.docker/config.json, ~/.config/gh/
-./scripts/secrets-setup.sh          # fresh SSH key + gh auth login
-./scripts/git-credentials.sh        # a PAT per host, into kwallet
+./scripts/secrets-setup.sh          # gh auth login (HTTPS + token)
+./scripts/git-credentials.sh        # a PAT per host, into kwallet - github.com
+                                    # and the private forge. Both remotes are
+                                    # HTTPS; no SSH key is involved anywhere.
 
 # 5. clone your project repos into the SAME paths as before
 #    ~/Documents/Code/VSCode/structflow, .../SocialHousingOSS, ...

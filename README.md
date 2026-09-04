@@ -46,8 +46,8 @@ sudo ./system/apply.sh      # /etc drop-ins, and enable the units Arch ships dis
 sudo usermod -aG docker "$USER"
 sudo usermod -aG kvm "$USER"    # only for Claude Desktop's Cowork tab (QEMU/KVM VM)
 ./scripts/reclaim.sh        # reclaim disk: pacman cache, orphans, coredumps
-./scripts/secrets-setup.sh  # generate an SSH key, sign in to GitHub
-./scripts/git-credentials.sh # store a PAT per host so HTTPS git stops prompting
+./scripts/secrets-setup.sh  # sign in to GitHub (gh auth login, over HTTPS)
+./scripts/git-credentials.sh # a PAT per host - github.com and the private forge
 ./scripts/doctor.sh         # verify
 ```
 
@@ -112,11 +112,14 @@ pattern is worth knowing because it caused real confusion during the migration:
 
 ## Secrets
 
-None are stored here. `scripts/secrets-setup.sh` *generates* an SSH key and runs
-`gh auth login`; `scripts/git-credentials.sh` *prompts* for a Personal Access Token per host
-and hands it to git's credential helper, which puts it in the desktop keyring — so HTTPS
-remotes stop asking without a token ever touching this tree. A fresh key per machine beats a
-synced one, and it means this repo can be public.
+None are stored here, and **the auth path is HTTPS + a Personal Access Token — not SSH**.
+Every remote is an HTTPS URL, on github.com and on the private forge alike.
+`scripts/git-credentials.sh` *prompts* for a token per host and hands it to git's credential
+helper, which puts it in the desktop keyring — so those remotes stop asking without a token
+ever touching this tree. `scripts/secrets-setup.sh` covers the `gh` CLI's own session with
+`gh auth login`, which is likewise token-based; it generates an SSH key only if you ask for
+one with `--ssh`. Credentials issued per machine beat synced ones, and it means this repo can
+be public.
 
 > The one config file those scripts do write, `~/.config/git/credentials.inc`, is deliberately
 > *not* chezmoi-managed: `git config --global` writes `~/.gitconfig`, which chezmoi

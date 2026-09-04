@@ -412,11 +412,15 @@ The ordering *is* the content.
    `promptStringOnce` caches whatever you give it and never asks again.
 7. **Restore the credential files by hand** — `~/.npmrc`, `~/.nuget/NuGet.Config`,
    `~/.docker/config.json`, `~/.config/gh/`. The repo will not do this for you, by design.
-   Then `./scripts/secrets-setup.sh` for a fresh SSH key and `gh auth login`, and add the new
-   public key at github.com/settings/keys. There is no old key to revoke.
-   Then `./scripts/git-credentials.sh` for the HTTPS side — a PAT for github.com and one for
-   the private forge, stored in kwallet. Issue **new** tokens rather than carrying the old
-   ones; the wallet does not survive the wipe either way.
+   Then `./scripts/secrets-setup.sh` for `gh auth login` — choose **HTTPS** when it asks for
+   the git protocol.
+   Then `./scripts/git-credentials.sh`, which is the step that actually restores git access:
+   a PAT for github.com and one for the private forge, stored in kwallet. Issue **new** tokens
+   rather than carrying the old ones; the wallet does not survive the wipe either way.
+
+   > **Every remote is HTTPS + a token — there is no SSH anywhere in this move.** No key to
+   > carry, none to generate, none to add at github.com/settings/keys, and no old key to
+   > revoke. `secrets-setup.sh --ssh` will make one if some host ever demands it.
 8. **Re-clone every repo fresh from its remote.** Do not restore working trees: it proves
    the Stage 2 pushes were real, it avoids carrying `node_modules`/`obj`/`bin` across a
    glibc change, and it leaves you with clean trees. **Then** drop the gitignored

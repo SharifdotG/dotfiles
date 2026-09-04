@@ -232,8 +232,9 @@ cat <<'EOS'
                                     virtualization enabled in the BIOS. Chat and
                                     Claude Code work without it.
   ./scripts/reclaim.sh        reclaim disk: pacman cache, orphans, coredumps
-  ./scripts/secrets-setup.sh  generate an SSH key and sign in to GitHub
-  ./scripts/git-credentials.sh  store a PAT per host so git stops prompting
+  ./scripts/secrets-setup.sh  sign in to GitHub - gh auth login, over HTTPS
+  ./scripts/git-credentials.sh  a PAT per host (github.com + the private forge),
+                                into the keyring - this is the auth path, not SSH
   ./scripts/doctor.sh         verify everything
 EOS
 rule
