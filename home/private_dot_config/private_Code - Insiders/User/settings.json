@@ -19,7 +19,7 @@
   "extensions.autoUpdate": false,
 
   "telemetry.telemetryLevel": "off",
-  "editor.fontFamily": "Cascadia Code NF",
+  "editor.fontFamily": "CaskaydiaCove Nerd Font",
   "files.autoSave": "afterDelay",
   "files.autoSaveDelay": 500,
   "C_Cpp.clang_format_fallbackStyle": "{BasedOnStyle: LLVM, IndentWidth: 4, TabWidth: 4}",

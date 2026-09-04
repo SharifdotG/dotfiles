@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Apply the desktop look: Catppuccin Latte Blue colours, Fluent icons,
-# WhiteSur cursors, Adwaita Sans / Cascadia Code NF, and the wallpaper.
+# WhiteSur cursors, Adwaita Sans / CaskaydiaCove Nerd Font, the lock screen
+# and the wallpaper.
 #
 # WHY A SCRIPT AND NOT MANAGED FILES
 # Plasma OWNS kdeglobals, kcminputrc, kwinrc and plasma-org.kde.plasma.desktop-
@@ -43,7 +44,7 @@
 
 set -uo pipefail
 
-# hash: 20260904b  (bump to force a re-apply when you change a VALUE below;
+# hash: 20260904c  (bump to force a re-apply when you change a VALUE below;
 #                   the state line above already covers changes in the
 #                   environment the guards test)
 
@@ -52,6 +53,7 @@ ICONS="Fluent"
 CURSOR="WhiteSur-cursors"
 CURSOR_SIZE=24
 WALLPAPER="${XDG_DATA_HOME:-$HOME/.local/share}/wallpapers/Catppuccin-Latte/contents/images/3840x2160.png"
+LOCK_WALLPAPER="$WALLPAPER"
 
 # Qt6 font spec: Family,size,-1,5,weight,italic,underline,strikeout,fixed,...
 # Plasma 6 uses REAL weights (400 = regular). Plasma 5 used 50 here; a 5-era
@@ -59,7 +61,12 @@ WALLPAPER="${XDG_DATA_HOME:-$HOME/.local/share}/wallpapers/Catppuccin-Latte/cont
 UI_FONT="Adwaita Sans,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
 UI_FONT_SMALL="Adwaita Sans,9,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
 UI_FONT_BOLD="Adwaita Sans,10,-1,5,700,0,0,0,0,0,0,0,0,0,0,1"
-MONO_FONT="Cascadia Code NF,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
+# NB: "CaskaydiaCove Nerd Font", not "Cascadia Code NF". The package is
+# ttf-cascadia-code-nerd but the patched fonts inside it register as Caskaydia
+# Cove; the old string matched nothing and Qt fell back to a proportional sans.
+# Must stay identical to the monospace family in
+# ~/.config/fontconfig/fonts.conf - see the long note there.
+MONO_FONT="CaskaydiaCove Nerd Font,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
 
 if ! command -v kwriteconfig6 >/dev/null 2>&1; then
   echo "  kde-theme: no kwriteconfig6 - not a Plasma 6 machine, skipping"
@@ -141,6 +148,75 @@ kwriteconfig6 --file kdeglobals --group WM      --key activeFont           "$UI_
 kwriteconfig6 --file kdeglobals --group General --key XftAntialias   "true"
 kwriteconfig6 --file kdeglobals --group General --key XftHintStyle   "hintslight"
 kwriteconfig6 --file kdeglobals --group General --key XftSubPixel    "rgb"
+
+# ── lock screen ──────────────────────────────────────────────────────────────
+# THERE IS NO CATPPUCCIN LOCK SCREEN TO INSTALL. Checked 2026-09-04, because
+# this looked like it should be a package and is not:
+#
+#   catppuccin/kde (v0.4.0, and main) ships colour schemes, an Aurorae
+#     decoration, a splash and four look-and-feel packages - and the
+#     look-and-feel packages contain ONLY contents/defaults + metadata.json.
+#     `find` for LockScreen*.qml across the whole tree returns nothing. So
+#     `plasma-apply-lookandfeel Catppuccin-Latte-Blue` would not theme the lock
+#     screen either; it would just overwrite the decoration choice above with
+#     Aurorae and the cursor with catppuccin-latte-blue-cursors.
+#   catppuccin/catppuccin's ports list has SDDM, but no kscreenlocker port -
+#     and this machine does not run SDDM anyway. The display manager here is
+#     plasmalogin (/etc/systemd/system/display-manager.service ->
+#     plasmalogin.service), KDE's SDDM replacement, which has no Catppuccin
+#     port at all.
+#
+# So the lock screen has exactly two theming surfaces, and both are covered:
+#
+#   COLOURS - already done, and for free. kscreenlocker_greet renders with the
+#     Plasma style named in plasmarc ([Theme] name=default). That style ships
+#     NO `colors` file (`ls /usr/share/plasma/desktoptheme/default/` - there is
+#     none), which is how a Plasma style declares "follow the system colour
+#     scheme". So the greeter reads CatppuccinLatteBlue out of kdeglobals like
+#     everything else. Nothing to write; setting the colour scheme above IS
+#     theming the lock screen.
+#
+#   WALLPAPER - the actual gap, and the only thing below. Left alone the
+#     greeter falls back to the look-and-feel default ("Next", Plasma's stock
+#     wallpaper), so the desktop was Catppuccin and the lock screen was not.
+#
+# The key names come from the greeter binary, not from a blog post:
+#   strings /usr/lib/libKScreenLocker.so.6 | grep -i wallpaperplugin
+#     -> wallpaperPluginId
+# and the plugin's own config nests under it, the same shape Plasma uses for
+# the desktop containment in plasma-org.kde.plasma.desktop-appletsrc:
+#   [Greeter][Wallpaper][org.kde.image][General] Image=
+#
+# NB: a PLAIN ABSOLUTE PATH, not a file:// URL. Both parse, but the plain form
+# is what Plasma itself writes for a system wallpaper (see the CachyOS default
+# in appletsrc) and it sidesteps URL-encoding a home directory.
+#
+# NB: wallpaperPluginId is set explicitly even though org.kde.image is the
+# default. It is not inherited from anywhere useful, and if a look-and-feel is
+# ever applied it will set this key - so writing it keeps the Image= below
+# meaningful instead of silently orphaned under a plugin nothing is using.
+#
+# NB: unlike the desktop wallpaper there is no plasma-apply-* helper for this,
+# and kscreenlockerrc is NOT a file Plasma rewrites behind your back the way it
+# does appletsrc - the greeter only reads it, at lock time. So kwriteconfig6
+# here is the whole mechanism, it needs no live session, and it takes effect at
+# the very next lock with no relog.
+if [ -f "$LOCK_WALLPAPER" ]; then
+  kwriteconfig6 --file kscreenlockerrc --group Greeter \
+    --key wallpaperPluginId "org.kde.image"
+  kwriteconfig6 --file kscreenlockerrc \
+    --group Greeter --group Wallpaper --group org.kde.image --group General \
+    --key Image "$LOCK_WALLPAPER"
+  # PreviewImage is what the System Settings page shows in its thumbnail. Not
+  # setting it is not a functional bug, it just makes the KCM look like the
+  # wallpaper is unset when it is not.
+  kwriteconfig6 --file kscreenlockerrc \
+    --group Greeter --group Wallpaper --group org.kde.image --group General \
+    --key PreviewImage "$LOCK_WALLPAPER"
+  echo "  kde-theme: lock screen wallpaper set (colours follow $COLORSCHEME)"
+else
+  echo "  kde-theme: lock screen wallpaper missing at $LOCK_WALLPAPER"
+fi
 
 # ── live session only ────────────────────────────────────────────────────────
 # Everything above is a config write and works headless. Everything below talks

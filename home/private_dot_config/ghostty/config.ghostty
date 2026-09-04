@@ -43,12 +43,38 @@
 # `iCursorVisible.x` on a uniform that is an int.
 
 # ── font ─────────────────────────────────────────────────────────────────────
-# NB: the family string is "Cascadia Code NF", not "Cascadia Code Nerd Font".
-# fontconfig matches the name in the font's own name table, and the Nerd Font
-# build reports "NF". Give it the wrong string and fontconfig substitutes some
-# other monospace silently — `fc-match 'Not A Font'` returns Adwaita Sans rather
-# than failing. Check with: fc-match 'Cascadia Code NF'
-font-family = Cascadia Code NF
+# CORRECTION, 2026-09-04. This said the family string was "Cascadia Code NF",
+# "not Cascadia Code Nerd Font". Both are wrong on this machine, and the note
+# even described the exact symptom without noticing it was live:
+#
+#     fc-match 'Cascadia Code NF'   ->  AdwaitaSans-Regular.ttf
+#
+# The terminal was running on a PROPORTIONAL SANS. fontconfig substitutes rather
+# than failing, Ghostty reports no error, and the config looks perfect.
+#
+# The cause is that the Arch PACKAGE is named after Cascadia Code but the FONTS
+# in it are Nerd Fonts' patch of it, which renames the family to Caskaydia Cove:
+#
+#     pacman -Ql ttf-cascadia-code-nerd | grep TTF
+#         /usr/share/fonts/TTF/CaskaydiaCoveNerdFont-Regular.ttf   (and 53 more)
+#     fc-list : family | tr ',' '\n' | grep -i caskaydia | sort -u
+#         CaskaydiaCove Nerd Font        <- this one
+#         CaskaydiaCove Nerd Font Mono   <- icons squeezed into a single cell
+#         CaskaydiaCove Nerd Font Propo  <- proportional; never for a terminal
+#         CaskaydiaCove NF / NFM / NFP   <- abbreviated aliases of the same files
+#
+# Non-Mono on purpose: Ghostty handles a glyph wider than one cell correctly,
+# and Starship's powerline separators want their design width. The abbreviated
+# "NF" aliases also register every weight as a separate family
+# ("CaskaydiaCove NF SemiLight"), which makes bold/italic selection worse - so
+# the full name is the one to use.
+#
+# THE CHECK, and it is not `ghostty +show-config` (that echoes back any string
+# that parsed, including a family that does not exist):
+#     fc-match 'CaskaydiaCove Nerd Font'   # must name a CaskaydiaCove*.ttf
+# scripts/doctor.sh now runs exactly that, because this failed silently for
+# weeks.
+font-family = CaskaydiaCove Nerd Font
 font-size = 10
 
 # NB: only two features, and that is deliberate. This list carried 16 entries
@@ -64,10 +90,12 @@ font-size = 10
 # off rather than cargo-culted.
 #
 # UPDATE: ss01 and ss03 turned out to exist after all — but ONLY in the italic
-# faces. Read per-file straight out of each font's GSUB table:
+# faces. Read per-file straight out of each font's GSUB table. Re-verified
+# 2026-09-04 against the files actually installed, whose names are Caskaydia,
+# not Cascadia — the tags are unchanged, so nothing below needed revising:
 #
-#   CascadiaCodeNF-Regular.otf     ss02 ss19 ss20
-#   CascadiaCodeNF-Italic.otf      ss01 ss02 ss03 ss19 ss20
+#   CaskaydiaCoveNerdFont-Regular.ttf   ss02 ss19 ss20
+#   CaskaydiaCoveNerdFont-Italic.ttf    ss01 ss02 ss03 ss19 ss20
 #   (same split for every weight: roman gets 3, italic gets 5)
 #
 # That is why ss01 looked missing earlier — the Regular really does not have it.
@@ -80,7 +108,8 @@ font-feature = calt, zero, ss01, ss02, ss20
 
 # ── cursive italics ──────────────────────────────────────────────────────────
 # Cascadia Code's italic face IS the cursive one — it is a separate font file,
-# not a stylistic set, which is why no `ss` toggle produces it.
+# not a stylistic set, which is why no `ss` toggle produces it. The Nerd Font
+# patch preserves that, so CaskaydiaCoveNerdFont-Italic.ttf is still cursive.
 #
 # NB: both lines matter. Ghostty will happily SYNTHESISE an italic by shearing
 # the roman face, and a synthetic slant is not cursive — it is the upright
@@ -90,7 +119,7 @@ font-feature = calt, zero, ss01, ss02, ss20
 font-style-italic = Italic
 font-synthetic-style = bold,no-italic,bold-italic
 
-# A little breathing room between lines; Cascadia is tighter than Maple was.
+# A little breathing room between lines; Caskaydia is tighter than Maple was.
 adjust-cell-height = 8%
 
 # ── theme ────────────────────────────────────────────────────────────────────
