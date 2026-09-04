@@ -9,3 +9,10 @@
 
 # chezmoi's own machine-local answers
 home/.chezmoi.toml
+
+# Backup output. These scripts write outside the repo by default; this is the
+# guard for the day someone passes -o . by mistake. The repo is public.
+*.dump
+mcp-servers.json
+agents-skills.tar.gz
+databases.tsv

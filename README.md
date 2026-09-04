@@ -34,7 +34,7 @@ on anything that is not Arch-derived; see `docs/MIGRATION.md` for how the machin
 | `packages/*.tsv` | Logical package id → real name per source (`arch`, `aur`). Plain TSV, parsed with awk. |
 | `os/cachyos/prep.sh` | Repo tier, pacman settings and the AUR helper — everything that must be right *before* packages install. |
 | `system/` | The `/etc` drop-ins that keep the machine from freezing. Applied by an explicit `sudo`. |
-| `scripts/` | `reclaim.sh`, `secrets-setup.sh`, `git-credentials.sh`, `doctor.sh`. |
+| `scripts/` | `reclaim.sh`, `secrets-setup.sh`, `git-credentials.sh`, `doctor.sh`, and the backup pair `db-backup.sh` / `db-restore.sh` plus `claude-backup.sh`. |
 | `docs/SETUP-GUIDE.md` | The long-form guide. This repo is its executable half. |
 | `docs/MIGRATION.md` | The one-time move off Fedora KDE. A runbook, not a reference. |
 
@@ -49,6 +49,36 @@ sudo usermod -aG kvm "$USER"    # only for Claude Desktop's Cowork tab (QEMU/KVM
 ./scripts/git-credentials.sh # store a PAT per host so HTTPS git stops prompting
 ./scripts/doctor.sh         # verify
 ```
+
+## Moving to a new machine
+
+Two things on this laptop are neither in git nor regenerable: the Dockerised databases, and
+Claude Code's MCP server definitions with their API tokens. One script each, run **before**
+the wipe:
+
+```bash
+./scripts/db-backup.sh            # every Postgres -> pg_dump -Fc; other volumes -> tar
+./scripts/claude-backup.sh export # MCP servers, global skills, rules, settings
+```
+
+and after it, on the new machine, once the repos are cloned:
+
+```bash
+./scripts/db-restore.sh ~/Backup/db/<stamp> --list   # read-only: what is in there
+./scripts/db-restore.sh ~/Backup/db/<stamp>
+./scripts/claude-backup.sh restore -i ~/Backup/claude
+```
+
+Both outputs contain secrets — the projects' `.env` files, role password hashes, and live
+bearer tokens — and are written `0700`/`0600` outside this tree. Neither belongs on the
+external drive *only*; see `docs/MIGRATION.md` Stage 3.
+
+> **Why `pg_dump` and not a tar of the volume.** A tar of a live `PGDATA` is a torn snapshot
+> that restores cleanly and corrupts at the first checkpoint, and a `PGDATA` directory is
+> bound to its major version — this machine runs Postgres 15, 16 and 17 side by side. So the
+> split is by rule: Postgres gets logical dumps, everything else gets a tarball with its
+> containers stopped. Measured here: **~470 MB of database volumes → an 8.3 MB snapshot**,
+> and all three dumps verified by restoring them into clean throwaway servers.
 
 ## Two things not to "fix"
 

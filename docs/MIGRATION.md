@@ -162,7 +162,7 @@ directory you can list.
 | `$HOME` total | 26.3 GB |
 | − `.cache` 3.1 · `.vscode-insiders` 2.9 · `.npm` 1.5 · `.npm-global` 1.0 · `.nuget` 0.65 · `.codex/.tmp` 0.11 | **−9.3 GB** |
 | remaining `$HOME` | ~16.6 GB |
-| + Docker named volumes | +433 MB |
+| + Docker named volumes | +433 MB raw — **8.3 MB** as a `db-backup.sh` snapshot |
 | **payload** | **~18 GB** (~15 GB once `~/Backup` is pruned after Gate 2) |
 
 **A 32 GB drive is enough.** No external drive was attached when this was written.
@@ -208,17 +208,50 @@ directory you can list.
   install, which is the actual reason to export: nothing carries a wallet across a wipe.
   `scripts/git-credentials.sh` puts your git PATs in there, so an unexported wallet means
   re-issuing tokens, not losing the mechanism.
-- **The Brave profile, tarred whole** — `~/.config/BraveSoftware/Brave-Origin/` (212 MB).
-  Note `Brave-Origin`, **not** `Brave-Browser`; that is regular Brave's path and every guide
-  online uses it. Skip `~/.cache/BraveSoftware`.
-  > **NB — passwords and cookies are encrypted against the system keyring, not the profile.**
-  > Bookmarks, history, extensions and settings restore fine; saved logins and sessions may
-  > not, depending on whether the new install wires up a keyring where the old one didn't.
-  > Turn on **Brave Sync** (`brave://settings/braveSync`) before the wipe — it is chain-based
-  > with a 24-word code and no account. Write the code somewhere that is not this laptop.
-  > Restore into the **same or a newer** Brave version; older builds can corrupt the profile.
+- **Brave: the sync code, not the profile.** Re-measured 2026-09-04 and both halves of the
+  old advice were wrong. **Sync is already on** (`brave_sync_v2.seed` is set,
+  `sync.has_setup_completed` true) with every data type enabled except **payments** — so
+  bookmarks, history, passwords, autofill, extensions, settings, themes, tabs and reading list
+  all come back from the 24-word code alone. And the profile is **1.5 GB, not 212 MB**: 809 MB
+  of it is `Service Worker` and 309 MB `IndexedDB` — web-app caches that regenerate — plus
+  128 MB of extension *binaries*, which fall under the never-restore-native-modules rule below.
+  Tarring it whole is 1.5 GB to carry and then not restore.
+  > **What to actually do.** Read the code at `brave://settings/braveSync` → *View Sync Code*
+  > and **write the 24 words somewhere that is not this laptop.** The chain survives the wipe:
+  > it is deleted by *Delete Sync account* or by 12 months of inactivity, not by a device
+  > vanishing. Turn **payments** on too if you want saved cards, or accept losing them.
+  > **NB — cookies and sessions are not a sync data type and never will be.** You will be
+  > logged out of everything on the new machine regardless of what you back up, because
+  > passwords and cookies are encrypted against the *system keyring*, which starts empty.
+  > The thing that actually bites is **2FA**: make sure your recovery codes are reachable
+  > from something other than a logged-in browser session on this laptop.
+  > **NB — the one thing sync does not carry is extension *data*.** Only the extension list
+  > syncs. `Default/Local Extension Settings` (54 MB — uBlock custom filters and friends) is
+  > worth a small targeted tar; the other 1.4 GB is not.
+- **Claude Code's MCP servers, skills, rules and settings.** `./scripts/claude-backup.sh export`.
+  Nine MCP servers at user scope, four carrying live API keys or bearer tokens (stitch, both
+  visual-editor instances, context7); plus `~/.claude/skills`, `rules/`, `settings.json` and the
+  installed-plugin *list*.
+  > **NB — `~/.claude/skills` is three different things wearing one directory,** and a plain
+  > `tar` gets it wrong. Measured 2026-09-04: 3 real directories, 13 **relative** symlinks into
+  > `~/.agents/skills`, and **14 absolute symlinks to `/c/Users/SharifdotG/...`** left over from
+  > the Windows machine. `/c` does not exist here, so those fourteen are *already dead* — a tar
+  > would faithfully archive fourteen dangling links and restore them, still dead. The script
+  > drops them by name, keeps the working links **as links**, and archives `~/.agents/skills`
+  > alongside so they still resolve after restore. Verified into a sandbox `$HOME`: 19 skills,
+  > zero dangling.
+  > **NB — export, do not copy `~/.claude.json`.** That file is 79 KB of which the MCP config
+  > is a few hundred bytes; the rest is this machine's identity — `machineID`, `userID`,
+  > onboarding flags, per-project history, cached feature flags. The script extracts only
+  > `mcpServers`, at both scopes, and merges it back without touching anything else.
+  > It also names the servers that would arrive dead: `spartan-ui` and `pencil` already point
+  > at binaries that do not exist here, and the three project-scoped entries are stale
+  > `C:/Users/...` paths from an even older machine. Prune them while you are moving.
 - `~/Documents` (3.8 GB); `~/.config` and `~/.local` **backed up wholesale, restored
-  selectively**; `~/.claude` (241 MB — real config, not just cache).
+  selectively**; `~/.claude` — re-measured at **294 MB**, of which `projects/` alone is 248 MB
+  of conversation transcripts and `plugins/` a re-installable 37 MB. The part that is genuinely
+  config — `settings.json`, `rules/`, `skills/` — is a few megabytes. Decide explicitly rather
+  than copying 294 MB by reflex.
 - `~/.ssh/config` and `known_hosts` if they exist. **There is no keypair and there are zero
   GPG secret keys** — measured — so there is no key material to migrate at all.
 
@@ -236,19 +269,45 @@ rsync -aHAX --info=progress2 --exclude-from=exclusions.txt ~/ /run/media/<you>/B
 > use it) and git symlinks come back as regular files. Check with
 > `findmnt -no FSTYPE <mountpoint>` before the first byte is copied.
 
-Docker volumes — all 8, they are only 433 MB:
+Databases and Docker volumes — one script, `scripts/db-backup.sh`:
 
 ```bash
-for v in $(docker volume ls -q); do
-  docker run --rm -v "$v":/data -v "$PWD":/backup alpine \
-    tar czf "/backup/$v.tar.gz" -C /data .
-done
+./scripts/db-backup.sh          # -> ~/Backup/db/<UTC stamp>/
 ```
 
-> **NB — stop the containers first**, especially Postgres and MinIO. A tar of a live
-> database's data directory is a torn snapshot: it will restore cleanly, pass a smoke test,
-> and corrupt at the first checkpoint. For Postgres, take a `pg_dumpall` **in addition to**
-> the volume tar.
+It splits the named volumes by rule, because the right answer differs:
+
+| | |
+|---|---|
+| a Postgres data volume | `pg_dump -Fc`, run **inside** the container so the dump client version matches the server |
+| every other volume | `tar`, with the containers that mount it **stopped** for the duration |
+
+> **NB — do not just tar the Postgres volumes, for two independent reasons.** A tar of a live
+> `PGDATA` is a torn snapshot: it restores cleanly, passes a smoke test, and corrupts at the
+> first checkpoint. And a `PGDATA` directory is bound to its major version — this machine runs
+> **15, 16 and 17 side by side**, so a `postgres:15` volume cannot be opened by a 17 server and
+> there is no in-place path across a reinstall. Logical dumps have neither problem.
+
+> **NB — the script never runs `docker start` on your containers, and that is not fastidiousness.**
+> `structflow-postgres-1` and `tryton-postgres-1` both publish host port **5432**, so starting the
+> stopped one fails whenever the other is up — which is most of the time, and it failed silently
+> the first time this was written. A stopped database is read through a *throwaway* container on
+> the same image and the same volume, publishing nothing. It also works if the container has since
+> been deleted.
+
+> **NB — the throwaway is given no `POSTGRES_PASSWORD`, deliberately.** If the volume were empty,
+> the official entrypoint refuses to initialise without one and fails loudly — rather than quietly
+> creating a fresh empty cluster and handing you a dump that restores perfectly and contains
+> nothing.
+
+Measured 2026-09-04: **~470 MB of database volumes → an 8.3 MB snapshot**, in 12 seconds, with
+all three dumps verified by restoring them into clean throwaway servers (structflow 73 tables,
+keycloak 87, tryton 540).
+
+> **The snapshot also copies each compose project's `.env`,** which is Stage 2's fourth check
+> arriving by a different route — and per byte it is worth more than the dumps. A restored
+> database is useless if the password the app connects with no longer matches. Pass `--no-env`
+> if you would rather keep the snapshot free of secrets and re-enter them by hand.
 
 **Two copies of the small irreplaceable set.** The gitignored secrets, the credential files
 and the kwallet export total a few hundred MB. Put them somewhere *other* than the external
@@ -383,9 +442,28 @@ The ordering *is* the content.
    just a backup policy.
 10. **Docker last.** Install, `systemctl enable --now docker.socket` (socket activation means
     dockerd is not resident until something talks to it — worth ~0.3 GB on a 16 GB box),
-    apply `daemon.json`, restore the 8 volume tarballs, re-pull from the image list, and
-    `docker load` **only** the local-only images. Do not restore build cache. Bring the stack
-    up one service at a time.
+    apply `daemon.json`, re-pull from the image list, and `docker load` **only** the local-only
+    images. Do not restore build cache. Then:
+
+    ```bash
+    ./scripts/db-restore.sh ~/Backup/db/<stamp> --list   # read-only. Do this first, always
+    ./scripts/db-restore.sh ~/Backup/db/<stamp>
+    ```
+
+    It verifies every checksum **before** writing anything, puts each project's `.env` back
+    (never overwriting one that already exists), extracts the non-Postgres volumes, brings up
+    **only** the database service of each stack — not the whole stack, so the app cannot start
+    writing before its data is in — and `pg_restore`s into it, prompting once per database.
+    Then bring the rest of each stack up one service at a time.
+
+    > **NB — `pg_restore` exits 1 when it ignored errors and still finished.** That is neither
+    > success nor failure, and the script says which of the three happened rather than printing
+    > a tick over a partial load. Read those errors before trusting the database.
+
+    Also `./scripts/claude-backup.sh restore -i ~/Backup/claude` — it backs up `~/.claude.json`
+    first, and anything already present on the new machine wins over the export unless you pass
+    `--force`. Plugins are **not** restored: the cache is 37 MB and some entries still record a
+    `C:\Users\...` install path, so the script prints the list for `/plugin install` instead.
 11. **Check where the browser actually lives in the cgroup tree.**
     ```bash
     for p in $(pgrep -f /opt/brave.com/brave-origin); do cut -d: -f3 /proc/$p/cgroup; done | sort | uniq -c
