@@ -33,7 +33,9 @@ step "Not managed here (by design)"
 cat <<'EOS'
   ~/.npmrc, ~/.nuget/NuGet.Config   registry tokens
   ~/.docker/config.json             registry credentials
-  gnome-keyring                     desktop secrets (Secret Service)
+  kwallet                           desktop secrets. On Plasma it is ksecretd that
+                                    owns org.freedesktop.secrets, NOT gnome-keyring -
+                                    which is why git-credentials.sh works here
   Brave profile                     use Brave Sync (a sync chain, not an account)
   Bitwarden vault                   sign in normally
 EOS
