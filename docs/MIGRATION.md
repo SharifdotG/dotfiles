@@ -16,8 +16,10 @@ file.
 
 ## Stage 0 — Push the dotfiles repo. Before reading further.
 
-This repo has **no git remote**, sits on `master`, and had **3 unpushed commits and 6 dirty
-paths** when the migration was planned. It is the executable half of everything below, and
+This repo now HAS a remote (`origin` → github.com/SharifdotG/dotfiles) — that part of Stage 0
+is done. What is not done is the pushing: it sits on `master`, and work has repeatedly
+accumulated ahead of the remote (3 unpushed commits and 6 dirty paths when the migration was
+first planned; 3 unpushed commits again on 2026-09-04). It is the executable half of everything below, and
 its only copy is on the disk you are about to erase.
 
 1. Create the remote (`gh repo create`, or on github.com) and `git remote add origin …`.
@@ -198,8 +200,14 @@ directory you can list.
   both `.gitignore` and `.chezmoiignore` on purpose (see `scripts/secrets-setup.sh`), which
   creates the trap: **the dotfiles repo restores everything except the few things you
   cannot regenerate.**
-- **kwallet contents.** KDE is going and kwallet goes with it. Export before the wipe;
-  `gnome-keyring` is the successor and it starts empty.
+- **kwallet contents.** Export before the wipe. This item used to say "KDE is going and
+  kwallet goes with it, `gnome-keyring` is the successor" — that was written while the target
+  was a bare compositor, and it is **wrong now**: the target is CachyOS **KDE Plasma**, so
+  kwallet comes with it and stays the Secret Service provider (on Plasma 6 the daemon
+  answering `org.freedesktop.secrets` is `ksecretd`). It still starts EMPTY on a fresh
+  install, which is the actual reason to export: nothing carries a wallet across a wipe.
+  `scripts/git-credentials.sh` puts your git PATs in there, so an unexported wallet means
+  re-issuing tokens, not losing the mechanism.
 - **The Brave profile, tarred whole** — `~/.config/BraveSoftware/Brave-Origin/` (212 MB).
   Note `Brave-Origin`, **not** `Brave-Browser`; that is regular Brave's path and every guide
   online uses it. Skip `~/.cache/BraveSoftware`.
@@ -362,6 +370,9 @@ The ordering *is* the content.
    `~/.docker/config.json`, `~/.config/gh/`. The repo will not do this for you, by design.
    Then `./scripts/secrets-setup.sh` for a fresh SSH key and `gh auth login`, and add the new
    public key at github.com/settings/keys. There is no old key to revoke.
+   Then `./scripts/git-credentials.sh` for the HTTPS side — a PAT for github.com and one for
+   the private forge, stored in kwallet. Issue **new** tokens rather than carrying the old
+   ones; the wallet does not survive the wipe either way.
 8. **Re-clone every repo fresh from its remote.** Do not restore working trees: it proves
    the Stage 2 pushes were real, it avoids carrying `node_modules`/`obj`/`bin` across a
    glibc change, and it leaves you with clean trees. **Then** drop the gitignored
@@ -379,17 +390,24 @@ The ordering *is* the content.
     ```bash
     for p in $(pgrep -f /opt/brave.com/brave-origin); do cut -d: -f3 /proc/$p/cgroup; done | sort | uniq -c
     ```
-    Expect `app-org.chromium.Chromium-<PID>.scope` — Chromium self-registers its own
-    transient scope and migrates out of the unit KDE creates. Measured on the old machine:
-    33 processes in the self-created scope, 2 in a second Chromium scope, 2 left in KDE's
-    unit. This used to mean the browser had no `MemoryHigh` cap; since 2026-09-03 it is
-    capped again by `home/private_dot_config/systemd/user/browser.slice` plus the
-    `app-org.chromium.Chromium-.scope.d/` dash-truncation drop-in. See Phase 5.
-    `doctor.sh` checks both, so a rename that breaks the targeting shows up as a failure
-    rather than as silence.
+    Expect **two** cgroups, and expect most of Brave to be in the one KDE creates:
+    ```
+    app-brave\x2dorigin@<hex>.service       ~35 procs   the bulk of it
+    app-org.chromium.Chromium-<PID>.scope     ~2 procs   Chromium's own
+    ```
+    **Do not trust the older note that said the opposite.** It claimed Chromium "migrates out
+    of the unit KDE creates", 33 of 35 processes into its own scope. Re-measured 2026-09-04,
+    that is backwards: GPU process, all three zygotes, the utility processes, crashpad and
+    every renderer stay in the `.service`. Capping only the scope covered 5% of the processes
+    and 19% of the memory while `doctor.sh` reported it green.
+    Both are capped now — `browser.slice` plus a drop-in each
+    (`app-brave\x2dorigin@.service.d/` for the service, which is a template instance, and
+    `app-org.chromium.Chromium-.scope.d/` for the scope, via dash-truncation). See Phase 5.
+    `doctor.sh` now checks **every** cgroup Brave's processes are in rather than filtering to
+    scopes, so a split that changes again shows up as a failure rather than as silence.
 
-    Expect `scopes actually in the slice` to read `0/N` until the first Brave restart on the
-    new machine — a live cgroup cannot be re-parented, and that is not a fault.
+    Expect `cgroups in the slice` to read `0/N` until the first Brave restart on the new
+    machine — a live cgroup cannot be re-parented, and that is not a fault.
 12. `./scripts/doctor.sh`, and fix what it reports.
 13. **Re-measure and update the guide's baseline table.** Plasma session idle (was 0.58 GiB
     on Fedora — expect it to be close), Brave working set, and the zram ratio. This closes the loop the guide promises, and it is the only way the
