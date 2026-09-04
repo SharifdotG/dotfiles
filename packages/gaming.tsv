@@ -17,8 +17,9 @@ mangohud	mangohud	skip	skip	Vulkan/OpenGL overlay. Also the fastest way to catch
 lib32-mangohud	lib32-mangohud	skip	skip	the 32-bit half
 gamescope	gamescope	skip	skip	Valve's micro-compositor. On an RX 570 the real lever is rendering at 720p and letting gamescope upscale to the 1080p panel (-w 1280 -h 720 -W 1920 -H 1080 -F fsr)
 lutris	lutris	skip	skip	non-Steam game manager; also the least painful way to drive a Wine prefix by hand
-wine	wine	skip	skip	stock Wine. NB: this is also what Affinity needs - v2 runs on stock Wine 10.17+ and no longer requires the patched ElementalWarrior fork. See docs/DESKTOP.md
-wine-mono	wine-mono	skip	skip	.NET for Wine; Affinity's installer wants it
+heroic-games-launcher-bin	skip	heroic-games-launcher-bin	skip	Epic Games, GOG and Amazon libraries. This is the Epic Games Launcher replacement: it wraps `legendary`, the CLI Epic client, in a GUI that installs and launches through Proton/Wine. legendary alone is command-line only. NB: put its game library on the same disk as Steam's, not in $HOME - see docs/DESKTOP.md
+wine	wine	skip	skip	stock Wine, for Lutris prefixes and anything Proton does not cover. NB: it is NOT here for Affinity any more - that was dropped; see packages/creative.tsv
+wine-mono	wine-mono	skip	skip	.NET for Wine. Plenty of Windows game launchers and installers are .NET, and without it they fail with a Mono download prompt that goes nowhere offline
 wine-gecko	wine-gecko	skip	skip	the embedded browser half of the same
 winetricks	winetricks	skip	skip	prefix surgery - fonts, runtimes, DLL overrides
 lib32-alsa-plugins	lib32-alsa-plugins	skip	skip	32-bit audio for old titles

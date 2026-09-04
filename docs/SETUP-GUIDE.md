@@ -16,8 +16,8 @@ see Phase 1.
 > rasterisation block, Ghostty's font size and scroll step — are selected per machine by
 > `lib/detect.sh` rather than being fixed. Everything in **Phase 4 (Memory & Anti-Freeze)**
 > is shared verbatim: both machines have 16 GB, so every number there was already correct
-> for both. For what differs — BIOS, keeping the NTFS storage disk, gaming, LACT, DaVinci
-> Resolve's ROCm pin, Affinity under Wine — see **`docs/DESKTOP.md`**.
+> for both. For what differs — BIOS, migrating the 1 TB disk off NTFS and turning it into
+> the game library, gaming, LACT, board sensors — see **`docs/DESKTOP.md`**.
 
 > **The one thing to take from this guide, stated up front.** Measured on this machine, the
 > entire Plasma session — compositor, shell, panel, every KDE daemon — costs **0.58 GiB**.

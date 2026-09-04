@@ -309,11 +309,9 @@ if [ "$PROFILE" = desktop ]; then
 cat <<'EOS'
 
   -- desktop only ------------------------------------------------------------
-  ./scripts/resolve-opencl.sh  pin ROCm to 5.7.1, or DaVinci Resolve sees no
-                               OpenCL device at all - AMD dropped Polaris after
-                               5.7 and the repos ship 7.x
-  docs/DESKTOP.md              mounting the storage disk, Affinity under Wine,
-                               LACT, and why Steam libraries must stay on the NVMe
+  docs/DESKTOP.md              migrating the 1 TB disk off NTFS and turning it
+                               into the game library, LACT, board sensors, and
+                               where Steam and Heroic put their games
 EOS
 fi
 rule

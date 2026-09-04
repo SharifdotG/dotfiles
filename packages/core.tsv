@@ -24,7 +24,6 @@ micro	micro	skip	micro
 fastfetch	fastfetch	skip	fastfetch
 unrar	unrar	skip	unrar
 7zip	7zip	skip	p7zip	the package is `7zip`; `p7zip` was dropped from extra and survives only as a provides/replaces on it. That distinction is load-bearing here: bootstrap.sh validates manifest names against `pacman -Slq`, which lists PACKAGE NAMES and not provides, so `p7zip` was classified missing and silently dropped from the transaction - a machine with no 7z at all. Manifest rows must always name a real package, never a provides
-yazi	yazi	skip	yazi	TUI file manager; the Dolphin replacement that fits this workflow
 chezmoi	chezmoi	skip	chezmoi
 starship	starship	skip	starship
 base-devel	base-devel	skip	skip	a group, not a package; prerequisite for any AUR build

@@ -89,10 +89,59 @@
     <edit name="family" mode="append" binding="weak"><string>Noto Color Emoji</string></edit>
   </match>
 
+  <!-- The CSS generic keywords. Plain aliases, and they work - verified:
+
+           $ fc-match 'ui\-monospace'   ->  CaskaydiaCoveNerdFont-Regular.ttf
+           $ fc-match 'system\-ui'      ->  AdwaitaSans-Regular.ttf
+
+       NB: THE BACKSLASH IS NOT OPTIONAL, and this cost an hour on 2026-09-05.
+       fc-match parses its argument as a FONT PATTERN, where an unescaped "-"
+       begins the size/style section. So
+
+           $ fc-match ui-monospace
+
+       does not ask for the family "ui-monospace" at all - it asks for the
+       family "ui", which matches nothing and substitutes to Adwaita Sans. That
+       reads exactly like "the ui-monospace alias is broken and code blocks are
+       rendering in a proportional font", and it is purely an artefact of how
+       the question was asked. Confirmed with FC_DEBUG=4, which shows the
+       request pattern as family: "ui".
+
+       Same trap for any hyphenated family: system-ui, ui-sans-serif, and
+       -apple-system (which additionally needs a bare `fc-match` end-of-options
+       marker, because getopt eats the leading dash). scripts/doctor.sh escapes them for this reason.
+       Do not "fix" these aliases; there is nothing wrong with them. -->
   <alias><family>system-ui</family><prefer><family>Adwaita Sans</family></prefer></alias>
   <alias><family>ui-monospace</family><prefer><family>CaskaydiaCove Nerd Font</family></prefer></alias>
 
   <!-- ── 2. Rasterisation, per panel ────────────────────────────────────────
+
+       NB, AND THIS IS THE IMPORTANT ONE: THIS FILE IS NOT THE LAST WORD.
+       Plasma's Fonts settings module (kcm_fonts.so - it carries the strings
+       XftHintStyle, hintstyle, rgba) re-serialises this exact file and APPENDS
+       its own <match target="font"> block instead of replacing one. Measured on
+       2026-09-05, on a machine where every config file said hintslight:
+
+           $ grep -c 'match target="font"' ~/.config/fontconfig/fonts.conf
+           33
+           $ fc-match -f '%{hintstyle} %{hinting} %{rgba}' sans-serif
+           0 False 5            # = hintnone, hinting off, subpixel off
+
+       target="font" edits with mode="assign" and no test all fire, in document
+       order, so the LAST block wins - and the last block was Plasma's. The
+       machine had been rendering with hinting and subpixel antialiasing off for
+       an unknown length of time. Nothing errored. `chezmoi status` showed
+       " M .config/fontconfig/fonts.conf" and nothing read it.
+
+       Two consequences, both load-bearing:
+         - `chezmoi apply` repairs it, because chezmoi owns the whole file.
+           Re-run it after any visit to System Settings -> Fonts.
+         - The values below are ALSO written to kdeglobals as XftAntialias /
+           XftHintStyle / XftSubPixel by .chezmoiscripts/20-kde-theme.sh,
+           because the KCM regenerates this file FROM those keys. That is how a
+           correct value survives the round trip. Change one, change both.
+       scripts/doctor.sh now reads the effective values back with fc-match
+       instead of trusting this file.
 
        Two machines, two densities, and the values below are chosen for the
        density - not for the machine:

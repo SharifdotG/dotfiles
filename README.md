@@ -9,9 +9,9 @@ Angular/Nx, .NET and a browser.**
 | CPU | i5-8365U · 4C/8T · Whiskey Lake | Ryzen 5 3600 · 6C/12T · Zen 2 |
 | GPU | Intel UHD 620 | Radeon RX 570 8 GB (Polaris) |
 | RAM | 16 GB | 16 GB DDR4-2400 |
-| Disk | 238 GB NVMe | 500 GB NVMe + 1 TB HDD (NTFS, kept) |
+| Disk | 238 GB NVMe | 500 GB NVMe + 1 TB HDD (reformatted, game library) |
 | Display | 14" 1080p @ 125% | 21.5" 1080p + 18.5" 768p, both @ 100% |
-| Extra | — | Steam, DaVinci Resolve, Affinity under Wine |
+| Extra | — | Steam, Heroic (Epic/GOG), Kdenlive |
 
 Because the RAM is the same on both, **the load-bearing half of this repo is identical on
 both machines** — every value in `system/` (swappiness 180, zram, earlyoom, the 6 GiB
@@ -73,7 +73,7 @@ What each axis selects:
 |---|---|---|
 | `CPU_VENDOR` | `packages/cpu-{intel,amd}.tsv` | `thermald` enabled only on Intel |
 | `GPU` | `packages/gpu-{intel,amd}.tsv` | `LIBVA_DRIVER_NAME`; `amdgpu.ppfeaturemask`; `lactd` |
-| `PROFILE` | `packages/{gaming,creative}.tsv` on desktop | font sizes, scroll step, MangoHud, gamemode, the Resolve wrapper |
+| `PROFILE` | `packages/{gaming,creative}.tsv` on desktop | font sizes, scroll step, MangoHud, gamemode |
 
 Everything else — `core`, `dev`, `reliability`, `desktop` (which means the graphical
 *session*, on both machines) — is shared.
@@ -122,7 +122,7 @@ binary that plainly exists. Everything is normalised to LF.
 | `docs/SETUP-GUIDE.md` | The long-form guide. This repo is its executable half. |
 | `docs/MIGRATION.md` | The one-time move off Fedora KDE. A runbook, not a reference. |
 | `docs/BACKUP.md` | Backup and restore: the databases, the `.env` files, and every agent's MCP + skills. |
-| `docs/DESKTOP.md` | The desktop machine: BIOS, keeping the NTFS disk, gaming, LACT, Resolve's ROCm pin, Affinity under Wine. |
+| `docs/DESKTOP.md` | The desktop machine: BIOS, migrating the 1 TB disk off NTFS into a game library, gaming, LACT, board sensors. |
 
 ## After bootstrap
 
@@ -194,6 +194,7 @@ pattern is worth knowing because it caused real confusion during the migration:
 | `kde-gtk-config` | `~/.config/gtk-{3,4}.0/`, `~/.gtkrc-2.0` | Ignored by chezmoi — deliberately KDE's, see above |
 | btop | its own `btop.conf` on exit | `save_config_on_exit = false` |
 | Plasma | most of `~/.config/*rc` | No Plasma *file* is managed. A script writes the handful of *keys* we care about (colour scheme, icons, cursor, fonts) with `kwriteconfig6` — the same API System Settings uses — and leaves the rest of each file to Plasma |
+| **Plasma's Fonts settings module** (`kcm_fonts`) | **`~/.config/fontconfig/fonts.conf` — a file chezmoi *does* manage** | Nothing prevents it. It re-serialises the file and **appends** its rasterisation block instead of replacing one, so the blocks accumulate and the last one wins. Found 2026-09-05 with **78 blocks** where the repo writes 1, and the machine rendering with hinting and subpixel antialiasing **off** while every config file said `hintslight` + `rgb`. `chezmoi apply` restores it; `scripts/doctor.sh` now reads the *effective* values back with `fc-match` so the drift cannot be silent again |
 
 ## Secrets
 

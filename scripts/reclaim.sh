@@ -157,6 +157,58 @@ else
     info "plasma-meta is no longer installed - see the note in this script"
 fi
 
+step "CachyOS defaults this repo does not use"
+# A DIFFERENT list from the one above, and deliberately not merged with it.
+#
+# The KDE apps above are judged by "has it ever been opened?" - a heuristic,
+# because they are ordinary applications someone might want. These are not:
+# every one is either superseded by something this repo installs on purpose, or
+# is configuration for a program that is not installed at all. So they are named
+# outright, with the reason, and there is no heuristic to get wrong.
+#
+# NB: NONE of these come from packages/*.tsv - they arrive on the CachyOS ISO.
+# That is why removal lives here and not in a manifest: bootstrap.sh never
+# installed them, so bootstrap.sh cannot uninstall them either. The one
+# exception is yazi, which WAS in packages/core.tsv and has been removed from
+# it - otherwise the next bootstrap would put it straight back.
+_cachy_cands="
+  alacritty:Ghostty is the terminal (packages/desktop.tsv)
+  cachyos-alacritty-config:config for the terminal above; orphaned without it
+  cachyos-emerald-kde-theme-git:Catppuccin is the theme
+  cachyos-nord-kde-theme-git:Catppuccin is the theme
+  cachyos-iridescent-kde:Catppuccin is the theme - and this one is installed BROKEN, at /usr/share/plasma/look-and-feel/look-and-feel/Iridescent-round, one directory too deep for Plasma to ever list it
+  cachyos-wallpapers:the wallpaper is Catppuccin Latte, committed in home/private_dot_local/share/wallpapers
+  cachyos-fish-config:fish is not installed; this is config for a shell that is not here
+  yazi:removed from packages/core.tsv; Dolphin is the file manager
+"
+_cremove=""
+while IFS= read -r line; do
+  pkg=${line%%:*}; pkg=$(printf '%s' "$pkg" | tr -d ' ')
+  [ -n "$pkg" ] || continue
+  pacman -Qq "$pkg" >/dev/null 2>&1 || continue
+  _cremove="$_cremove $pkg"
+  printf '    %-32s %s\n' "$pkg" "${line#*:}"
+done <<EOS
+$_cachy_cands
+EOS
+
+if [ -z "$_cremove" ]; then
+  ok "none of them are installed"
+else
+  # NB: konsole is NOT on the list, on purpose. It is an optional dependency of
+  # both Dolphin and Kate for their embedded terminal panel (F4), so removing it
+  # degrades two apps this repo does keep - and `pacman -Rns` will not warn,
+  # because an OPTIONAL dependency is not a dependency.
+  info "keeping konsole - Dolphin and Kate use it for the F4 terminal panel"
+  info "dry run:"
+  sudo pacman -Rns --print $_cremove 2>&1 | head -20 | sed 's/^/    /'
+  read -r -p "Remove them? [y/N] " a
+  case "${a:-n}" in
+    [yY]*) sudo pacman -Rns --noconfirm $_cremove && ok "removed" || warn "some removals failed" ;;
+    *)     ok "left alone" ;;
+  esac
+fi
+
 # ── 1. pacman package cache ──────────────────────────────────────────────────
 # The single biggest reclaim on Arch, and the one with no Fedora analogue: dnf
 # defaults to keepcache=False, pacman keeps everything. Routinely 5-20 GB.

@@ -88,3 +88,70 @@
     stripComponents = 2
     include = ["*/dist/**"]
     refreshPeriod = "168h"
+
+# ── Catppuccin Global Theme + splash ─────────────────────────────────────────
+#
+# CORRECTION, 2026-09-05. The colour-scheme note above says the rest of the
+# catppuccin/kde installer is unwanted, and that was half right. What it got
+# wrong: those look-and-feel packages ARE selectable Global Themes
+# (KPackageStructure: Plasma/LookAndFeel), so without them System Settings ->
+# Appearance -> Global Theme has no Catppuccin entry at all - which is exactly
+# what "the Catppuccin theme was not added" meant.
+#
+# Verified contents of the package's contents/defaults, which is all it
+# contains:
+#     [kdeglobals][General] ColorScheme=CatppuccinLatteBlue     <- want
+#     [kcminputrc][Mouse]   cursorTheme=catppuccin-latte-blue-cursors
+#     [kwinrc][org.kde.kdecoration2] library=org.kde.kwin.aurorae
+#                           theme=__aurorae__svg__CatppuccinLatte-Modern
+#                           BorderSize=None, BorderSizeAuto=false
+#     [plasmarc][Theme]     name=default   (it ships no Plasma style)
+#     [KSplash]             Theme=Catppuccin-Latte-Blue-splash  <- want
+# It sets NO icon theme, so WhiteSur icons are untouched by it. The cursor and
+# decoration lines are the two we do not want, and the theme script re-asserts
+# both AFTER applying the package - user config outranks ~/.config/kdedefaults/,
+# which is where a look-and-feel writes its defaults.
+#
+# "Modern" vs "Classic" is only which Aurorae decoration the defaults name, and
+# we override that either way.
+[".local/share/plasma/look-and-feel/Catppuccin-Latte-Blue"]
+    type = "archive"
+    url = "https://github.com/catppuccin/kde/archive/refs/tags/v0.4.0.tar.gz"
+    exact = true
+    stripComponents = 5
+    include = ["*/generated/look-and-feel/Modern/Catppuccin-Latte-Blue/**"]
+    refreshPeriod = "168h"
+
+# The splash has to be ASSEMBLED from three places, and this is the trap.
+#
+# generated/splash/Catppuccin-Latte-Blue-splash/contents/splash/ contains ONLY
+# images/. There is no Splash.qml in it. Upstream's install.sh copies the QML in
+# from generated/splash-qml/ and the logo from Resources/, and a package without
+# Splash.qml installs cleanly, appears in the theme list, and renders nothing at
+# all - a silent failure of exactly the kind this repo exists to catch.
+#
+# NB: no exact=true on this one, unlike the theme above. The two file externals
+# below write INTO this directory, and exact would delete them on every apply.
+[".local/share/plasma/look-and-feel/Catppuccin-Latte-Blue-splash"]
+    type = "archive"
+    url = "https://github.com/catppuccin/kde/archive/refs/tags/v0.4.0.tar.gz"
+    # NB: 4, not 5 like the theme above. The splash package sits one directory
+    # shallower in the tarball - generated/splash/<pkg>/ against
+    # generated/look-and-feel/Modern/<pkg>/ - and copying the 5 across is how
+    # you get an empty target directory with no error. Counted from `tar tzf`.
+    stripComponents = 4
+    include = ["*/generated/splash/Catppuccin-Latte-Blue-splash/**"]
+    refreshPeriod = "168h"
+
+[".local/share/plasma/look-and-feel/Catppuccin-Latte-Blue-splash/contents/splash/Splash.qml"]
+    type = "file"
+    url = "https://github.com/catppuccin/kde/raw/v0.4.0/generated/splash-qml/CatppuccinLatte-Splash.qml"
+    refreshPeriod = "168h"
+
+# Latte_Logo.png, not Logo.png: upstream picks the Latte-specific asset for the
+# light flavour and installs it UNDER THE NAME Logo.png, which Splash.qml then
+# references. Fetching Logo.png here would give the dark-flavour logo.
+[".local/share/plasma/look-and-feel/Catppuccin-Latte-Blue-splash/contents/splash/images/Logo.png"]
+    type = "file"
+    url = "https://github.com/catppuccin/kde/raw/v0.4.0/Resources/splash-screen/contents/splash/images/Latte_Logo.png"
+    refreshPeriod = "168h"

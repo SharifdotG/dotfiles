@@ -2,7 +2,7 @@
 
 **Machine:** Ryzen 5 3600 (6C/12T, Zen 2) · 16 GB DDR4-2400 · Radeon RX 570 8 GB
 (Polaris, gfx803) · MSI B450M Mortar MAX · 500 GB Samsung 970 EVO NVMe +
-1 TB WD 7200 RPM (NTFS, **kept**) · 450 W PSU
+1 TB WD 7200 RPM (NTFS today, **reformatted** into the game library) · 450 W PSU
 **Displays:** Esonic 22ELMW 1920×1080 (primary, right, ~102 ppi) · Samsung
 S19F350 1366×768 (left, ~85 ppi) — both at 100 % scale
 **Target:** CachyOS + KDE Plasma 6 / Wayland, Windows removed from the NVMe
@@ -22,11 +22,16 @@ is not repeated: both machines have 16 GB, so every number was already right.
 
 ### ⚠️ The gate: shut Windows down *properly*, once
 
-The 1 TB drive is staying as NTFS. Windows does not fully unmount an NTFS volume
-when you "shut down" with **Fast Startup** enabled — it hibernates the kernel
-instead and leaves the filesystem journal dirty. Linux's `ntfs3` driver reacts to
-a dirty volume by **mounting it read-only**, silently. No error, no dialog: writes
-just start failing, weeks later, and it reads like a failing disk.
+The 1 TB drive holds data you are keeping, and the only copy is on it. Windows
+does not fully unmount an NTFS volume when you "shut down" with **Fast Startup**
+enabled — it hibernates the kernel instead and leaves the filesystem journal
+dirty. Linux's `ntfs3` driver reacts to a dirty volume by **mounting it
+read-only**, silently.
+
+That used to be a nuisance. Now it is the thing standing between you and your
+files: Phase 2 copies that data off before the disk is reformatted, and a
+read-only mount is fine for reading — but a volume dirty enough to confuse the
+driver is a volume you do not want to be reading your only copy from.
 
 So, in Windows, *before* you install anything:
 
@@ -36,11 +41,8 @@ So, in Windows, *before* you install anything:
 2. Shut down (not restart, not sleep). That shutdown is the one that leaves the
    NTFS volume clean.
 
-If you skip this and later find the disk read-only, the fix is `sudo ntfsfix -d
-/dev/sdXN` — but that is a repair, not a substitute. Do it in the right order.
-
-`scripts/doctor.sh` checks the live mount options for exactly this, because a
-read-only NTFS mount is invisible until you try to write.
+If you skip it and the disk later mounts read-only or refuses, `sudo ntfsfix -d
+/dev/sdXN` is the repair — but do it in the right order and you never need it.
 
 ### BIOS (MSI B450M Mortar MAX)
 
@@ -113,58 +115,119 @@ amdgpu only picks the option up on the next boot. The script says so, and
 
 ---
 
-## Phase 2 — The 1 TB storage disk
+## Phase 2 — Migrating the 1 TB disk into the game library
 
-Find it, and note that the repo deliberately does **not** manage this: a UUID is
-machine-local inventory and this repo is public.
+The disk arrives as NTFS holding data worth keeping (**under 200 GB**), and
+leaves as a Linux filesystem holding that data *and* the Steam and Heroic
+libraries. Three stages, each gated on the one before. **Do not start this until
+Phase 1 is finished** — you want a working system, not a live USB, doing the
+copying.
+
+This is a runbook, not a script. It runs once, it is destructive at stage 3, and
+the UUIDs are machine-local inventory that this public repo deliberately does not
+carry.
+
+### Stage 1 — Copy off, read-only
+
+Mount it **read-only**. Nothing writes to the source until the copy is verified.
 
 ```bash
-lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINT
-sudo blkid /dev/sdXN
+lsblk -o NAME,SIZE,FSTYPE,LABEL,UUID
+sudo mkdir -p /mnt/old
+sudo mount -o ro,noatime /dev/sdXN /mnt/old
 ```
 
-Mount point and `/etc/fstab` line:
+**Measure before committing to anything:**
 
 ```bash
-sudo mkdir -p /mnt/storage
+du -sh /mnt/old                 # how much there is
+df -h /home                     # how much room there is
 ```
+
+**The gate: free space must be at least 1.2× the data.** The margin is not
+padding — `rsync` needs room for partial files, and btrfs needs room to not go
+read-only at 100 % full, which is a genuinely unpleasant way to end an evening.
+If it does not fit, stop and use an external drive as the staging area instead.
+
+```bash
+mkdir -p ~/Storage-staging
+rsync -aHAX --info=progress2 /mnt/old/ ~/Storage-staging/
+```
+
+### Stage 2 — Verify by content, not by exit status
+
+`rsync` exiting 0 says it finished, not that the bytes match. Check the bytes.
+This is the same discipline `scripts/db-backup.sh` and `db-restore.sh` already
+apply to database dumps — sha256 manifests on both sides, compared before
+anything is destroyed.
+
+```bash
+cd /mnt/old        && find . -type f | sort | xargs -d'\n' sha256sum > /tmp/old.sha256
+cd ~/Storage-staging && find . -type f | sort | xargs -d'\n' sha256sum > /tmp/new.sha256
+diff /tmp/old.sha256 /tmp/new.sha256 && echo "IDENTICAL - safe to reformat"
+```
+
+**If that `diff` prints anything, do not continue.** Re-run the `rsync`; it is
+incremental and cheap the second time.
+
+### Stage 3 — Reformat, and only then
+
+```bash
+sudo umount /mnt/old
+sudo mkfs.ext4 -L games /dev/sdXN
+```
+
+**ext4, not btrfs, and this is a deliberate departure from the NVMe.** btrfs is
+right for a root filesystem — that is where snapshots and `snap-pac` earn their
+keep. It is wrong for a games disk: copy-on-write fragments the large files that
+games are made of, every shader-cache write becomes a new extent, and there is
+nothing here worth snapshotting because Steam can re-download all of it. If you
+want subvolumes anyway, use btrfs with `nodatacow` set on the library directory
+and accept that you have traded throughput for tidiness.
+
+`/etc/fstab`, by UUID (`sudo blkid /dev/sdXN`):
 
 ```fstab
-UUID=<the-uuid>  /mnt/storage  ntfs3  rw,noatime,uid=1000,gid=1000,umask=022,windows_names  0 0
+UUID=<the-uuid>  /mnt/games  ext4  defaults,noatime  0 2
 ```
 
-- `ntfs3`, not `ntfs-3g` — the in-kernel driver, far faster than the FUSE one for
-  large files.
-- `uid`/`gid`/`umask` because NTFS has no Unix ownership; without them the mount
-  is root-owned and nothing you run can write to it.
-- `windows_names` rejects filenames Windows cannot represent, which keeps the disk
-  usable from a Windows box later.
-- **`noatime`** — this is a 7200 RPM spinning disk; every read otherwise costs a
-  seek and a write.
-
-Then verify the way that matters:
+`noatime` matters here more than on the NVMe: this is a 7200 RPM spinning disk,
+and every access-time update is a seek plus a write on a drive whose whole job is
+sequential reads.
 
 ```bash
-sudo systemctl daemon-reload && sudo mount -a
-findmnt -no SOURCE,TARGET,FSTYPE,OPTIONS /mnt/storage
+sudo mkdir -p /mnt/games && sudo systemctl daemon-reload && sudo mount -a
+sudo chown "$USER:$USER" /mnt/games
+findmnt -no SOURCE,TARGET,FSTYPE,OPTIONS /mnt/games
 ```
 
-The options must contain `rw`. If they say `ro`, the volume is dirty — go back to
-the Phase 0 gate. `doctor.sh` re-checks this on every run.
+Then move the data back, verify **again**, and only then delete the staging copy:
 
-### ⚠️ Do not put a Steam library here
+```bash
+mkdir -p /mnt/games/Storage
+rsync -aHAX --info=progress2 ~/Storage-staging/ /mnt/games/Storage/
+cd /mnt/games/Storage && find . -type f | sort | xargs -d'\n' sha256sum > /tmp/final.sha256
+diff <(sed 's|  ./|  |' /tmp/old.sha256) <(sed 's|  ./|  |' /tmp/final.sha256) &&
+  rm -rf ~/Storage-staging
+```
 
-**Steam does not support NTFS.** Proton games break on its case-insensitivity and
-its lack of real symlinks — typically as a game that downloads and installs
-perfectly and then will not launch, with nothing useful in the logs. Keep game
-libraries on the NVMe. `doctor.sh` fails if it finds a `steamapps` directory on
-an NTFS mount.
+### Stage 4 — Point the launchers at it
 
-Media, archives and `~/Backup` output (`db-backup.sh`, `agents-backup.sh`) are
-fine here — they are large, sequential and cold, which is exactly what a spinning
-disk is good at.
+- **Steam** → Settings → Storage → the `+` → `/mnt/games/SteamLibrary`.
+- **Heroic** → Settings → Default install path → `/mnt/games/Heroic`.
 
----
+Both libraries belong here rather than on the NVMe: a 500 GB NVMe holding the OS
+plus a modern game library fills up fast, and this is precisely the workload a
+spinning disk is still good at — large sequential reads that are not latency
+critical. Shader caches stay on the NVMe where Steam already puts them
+(`~/.steam`), and that is the part that actually benefits from the fast disk.
+
+**The reason this whole phase exists:** while the disk was NTFS, none of it was
+possible. Steam does not support NTFS libraries — Proton breaks on its
+case-insensitivity and its lack of real symlinks, typically as a game that
+installs perfectly and then will not launch, with nothing useful in the logs.
+`scripts/doctor.sh` still fails if it ever finds a `steamapps` directory on an
+NTFS mount, because that trap is one reformat away from being re-set.
 
 ## Phase 3 — GPU: proving the driver is real
 
@@ -243,8 +306,15 @@ first.
 
 ## Phase 4 — Gaming
 
-`packages/gaming.tsv` installs Steam, gamemode, MangoHud, gamescope, Lutris, the
-Wine stack, ProtonUp-Qt and umu-launcher, plus every 32-bit half.
+`packages/gaming.tsv` installs Steam, **Heroic**, gamemode, MangoHud, gamescope,
+Lutris, the Wine stack, ProtonUp-Qt and umu-launcher, plus every 32-bit half.
+
+**Heroic Games Launcher is the Epic Games Launcher replacement**, and also covers
+GOG and Amazon. It is a GUI over `legendary`, the command-line Epic client, and
+runs titles through Proton or Wine. Legendary on its own is CLI-only; Heroic is
+the better-maintained path for an Epic library and the one that does not require
+you to remember a command per game. Point its default install path at
+`/mnt/games/Heroic` — see Phase 2, Stage 4.
 
 **The 32-bit halves are the point.** A 64-bit-only install runs Steam fine and
 then renders every 32-bit title on the CPU, because the Vulkan loader substitutes
@@ -282,99 +352,40 @@ over-current trip looks like.
 
 ---
 
-## Phase 5 — DaVinci Resolve
+## Phase 5 — Video: Kdenlive
 
-Read this section before installing, because two of its limits are not fixable
-and it is better to know now.
+`packages/creative.tsv` installs `kdenlive` plus `ffmpeg`, `frei0r-plugins`,
+`mediainfo` and two Qt image-format packages. Nothing to configure — it decodes
+H.264/H.265 natively through ffmpeg and uses VA-API on the RX 570, which the
+shared "GPU & display stack" section of `doctor.sh` already verifies. Put project
+media on `/mnt/games/Storage` and the render cache on the NVMe.
 
-### Limit 1: the free version cannot open your footage
+### Why DaVinci Resolve is not here
 
-**Free DaVinci Resolve on Linux cannot decode or encode H.264 or H.265 at all**,
-in any container. This is a licensing decision, not a bug, and not something
-configuration can change. Which means: phone video, screen recordings, most
-camera output and most of what you already have will not import.
+It was, briefly, along with a 229-line script to make it work. Both are gone, and
+the reasons are worth keeping so nobody re-adds them:
 
-Options, honestly:
+1. **Free Resolve on Linux cannot decode or encode H.264 or H.265 at all**, in
+   any container. A licensing decision, not a bug, and not something
+   configuration can change — so phone video, screen recordings and most camera
+   output simply do not import without transcoding every clip to DNxHR first.
+2. **AMD dropped Polaris/gfx803 from ROCm after 5.7**, and the repos ship 7.x,
+   which enumerates **no OpenCL device** on an RX 570. Resolve then refuses to
+   start. The only route was pinning four packages to a 2023 release out of the
+   Arch Linux Archive and holding them there with `IgnorePkg` — forever, with no
+   security fixes, and one `pacman -Syu` away from silently breaking.
 
-- **Transcode first.** DNxHR in a MOV is the usual intermediate:
-  ```bash
-  ffmpeg -i in.mp4 -c:v dnxhd -profile:v dnxhr_hq -pix_fmt yuv422p -c:a pcm_s16le out.mov
-  ```
-  Fine for a handful of clips, tedious as a permanent workflow.
-- **Buy Resolve Studio.** Removes the codec restriction. Note it does *not* fix
-  Limit 2.
-- **Use Kdenlive or Shotcut instead** (both in `extra`). They go through ffmpeg,
-  handle H.264/H.265 natively, and use VA-API on the RX 570 with no ROCm anywhere
-  near them. If Resolve's colour tools are not what you are actually there for,
-  this is the low-friction answer.
+Kdenlive has neither problem. If you ever need Resolve's colour tools
+specifically, the honest options are Resolve Studio on a supported GPU, or a
+newer card — not the pin.
 
-### Limit 2: Polaris was dropped from ROCm
+### Why Affinity is not here
 
-Resolve needs an OpenCL device. AMD removed Polaris/gfx803 support after ROCm
-5.7, and the repos now ship 7.x, which enumerates **no device** on an RX 570 —
-Resolve then refuses to start or hangs on the splash screen.
-
-`scripts/resolve-opencl.sh` handles it:
-
-```bash
-scripts/resolve-opencl.sh --dry-run    # see exactly what it will do
-scripts/resolve-opencl.sh
-```
-
-It downgrades `rocm-core`, `comgr`, `rocm-opencl-runtime` and `rocm-cmake` to
-5.7.1 from the Arch Linux Archive in one transaction, holds them with an
-`IgnorePkg` line written **into `[options]`** (appended at the end of
-`pacman.conf` it would land in the last repo section and silently not apply), and
-then proves the result with `clinfo` rather than reporting success because
-pacman exited 0. It refuses to run on a non-AMD GPU.
-
-Then launch through the wrapper, never `/opt/resolve/bin/resolve` directly:
-
-```bash
-resolve        # ~/.local/bin/resolve, sets ROC_ENABLE_PRE_VEGA=1
-```
-
-The variable is scoped to the wrapper on purpose — in `environment.d` it would
-re-enable an untested AMD code path for every OpenCL consumer on the machine. The
-`.desktop` override in `~/.local/share/applications/` points the menu entry at the
-same wrapper, so launching from the application menu behaves identically. Without
-it, Resolve works in a terminal and fails from the menu, which is a confusing way
-to lose an afternoon.
-
-**Costs of the pin, stated plainly:** those four packages stop receiving fixes for
-as long as it is on, and a future `mesa` or `glibc` can break a 5.7.1 binary that
-nothing is rebuilding. `scripts/resolve-opencl.sh --undo` removes it.
-`--status` reports where things stand. `doctor.sh` checks both that an OpenCL
-device is visible and that the hold is still in `pacman-conf IgnorePkg`, because
-one `pacman -Syu` that quietly upgraded past it is how this breaks again in six
-months.
-
-If the script finishes and `clinfo -l` still shows nothing, the workaround has
-run out — that is the point to switch to Kdenlive, not to keep pulling packages
-out of the archive.
-
----
-
-## Phase 6 — Affinity
-
-Affinity has no Linux build. As of **Wine 10.17+ it runs on stock Wine** — the
-patched ElementalWarrior fork that every older guide insists on is no longer
-required. `packages/gaming.tsv` already installs `wine`, `wine-mono`,
-`wine-gecko` and `winetricks`, so the dependencies are in place.
-
-The installation itself is **not automated, deliberately**: it needs your own
-Affinity installers, it is interactive, and it builds a Wine prefix — none of
-which belong in a non-interactive `bootstrap.sh` that is supposed to be a cheap,
-idempotent re-run.
-
-Use the AffinityOnLinux scripts (<https://github.com/seapear/AffinityOnLinux>),
-which detect Arch and pull what they need. Keep the prefix out of `$HOME`'s
-default location if you would rather it were on the storage disk — but note that
-a Wine prefix on NTFS hits the same case-sensitivity problems Steam does, so the
-NVMe is the safer home for it.
-
-Krita, Inkscape and GIMP are all in `extra` and native, if the Wine prefix turns
-out to be more trouble than the specific Affinity features are worth.
+Affinity has no Linux build. It ran under Wine, needed your own installers and a
+GUI, and could never be part of a non-interactive `bootstrap.sh`. Canva in the
+browser replaced it. The Wine packages stay in `packages/gaming.tsv` because
+Lutris needs them, but they are no longer justified by Affinity. Krita, Inkscape
+and GIMP are all in `extra` and native if a local editor is wanted.
 
 ---
 
@@ -387,12 +398,15 @@ Two extra sections, both gated on `PROFILE=desktop`:
 reporting a real fan RPM; every NTFS mount actually `rw`.
 
 **Gaming & creative stack** — `multilib` in the live repo list; the 32-bit RADV
-ICD and library present; Steam installed; the gamemode user unit present; no
-Steam library on an NTFS mount; an OpenCL device visible; ROCm still held at the
-pinned version.
+ICD and library present; Steam, Heroic and Kdenlive installed; the gamemode user
+unit present; no Steam library left on an NTFS mount.
 
-Plus, on both machines, the new **GPU & display stack** section: chezmoi's stored
+Plus, on both machines: the **GPU & display stack** section (chezmoi's stored
 `gpu` matching the live PCI read, `LIBVA_DRIVER_NAME` correct for the card,
-VA-API actually initialising, and the Vulkan driver not being `llvmpipe`.
+VA-API actually initialising, the Vulkan driver not being `llvmpipe`), a
+**Desktop theme** section (the Catppuccin Global Theme installed *and* selected,
+the decoration still Breeze rather than the theme's Aurorae, the cursor still
+WhiteSur, the splash package complete rather than merely named), and the font
+rasterisation read-back described in the README's clobber table.
 
 None of those read a file this repo wrote. That is the whole point.

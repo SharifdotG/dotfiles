@@ -37,19 +37,23 @@
 # Plasma, and the rendered text changes - so the hash changes, so chezmoi
 # re-runs this by itself. No manual step, and no re-running on every apply.
 #
-# state: icons={{ if stat (joinPath .chezmoi.homeDir ".local/share/icons/Fluent") }}y{{ else if stat "/usr/share/icons/Fluent" }}y{{ else }}n{{ end }}
+# state: icons={{ if stat (joinPath .chezmoi.homeDir ".local/share/icons/WhiteSur/index.theme") }}y{{ else if stat "/usr/share/icons/WhiteSur/index.theme" }}y{{ else }}n{{ end }}
+#        lnf={{ if stat (joinPath .chezmoi.homeDir ".local/share/plasma/look-and-feel/Catppuccin-Latte-Blue/metadata.json") }}y{{ else }}n{{ end }}
+#        splash={{ if stat (joinPath .chezmoi.homeDir ".local/share/plasma/look-and-feel/Catppuccin-Latte-Blue-splash/contents/splash/Splash.qml") }}y{{ else }}n{{ end }}
 #        cursor={{ if stat (joinPath .chezmoi.homeDir ".local/share/icons/WhiteSur-cursors/index.theme") }}y{{ else if stat "/usr/share/icons/WhiteSur-cursors/index.theme" }}y{{ else }}n{{ end }}
 #        kwrite={{ if lookPath "kwriteconfig6" }}y{{ else }}n{{ end }}
 #        session={{ output "sh" "-c" "pgrep -x plasmashell >/dev/null 2>&1 && echo live || echo headless" }}
 
 set -uo pipefail
 
-# hash: 20260904c  (bump to force a re-apply when you change a VALUE below;
+# hash: 20260905a  (bump to force a re-apply when you change a VALUE below;
 #                   the state line above already covers changes in the
 #                   environment the guards test)
 
 COLORSCHEME="CatppuccinLatteBlue"
-ICONS="Fluent"
+LOOKANDFEEL="Catppuccin-Latte-Blue"
+SPLASH="Catppuccin-Latte-Blue-splash"
+ICONS="WhiteSur"
 CURSOR="WhiteSur-cursors"
 CURSOR_SIZE=24
 WALLPAPER="${XDG_DATA_HOME:-$HOME/.local/share}/wallpapers/Catppuccin-Latte/contents/images/3840x2160.png"
@@ -73,7 +77,7 @@ if ! command -v kwriteconfig6 >/dev/null 2>&1; then
   exit 0
 fi
 
-echo "  kde-theme: $COLORSCHEME + $ICONS icons + $CURSOR + Adwaita Sans"
+echo "  kde-theme: $LOOKANDFEEL + $ICONS icons + $CURSOR + $SPLASH splash + Adwaita Sans"
 
 # Refuse to point Plasma at a theme that is not on disk.
 #
@@ -100,33 +104,63 @@ theme_installed() {
 # is what a fresh session reads at login.
 kwriteconfig6 --file kdeglobals --group General --key ColorScheme "$COLORSCHEME"
 
-# ── window decoration: KDE's own Breeze, recoloured by the scheme above ───────
-# Deliberately NOT Catppuccin's Aurorae theme. Breeze reads the colour scheme's
-# [WM] section, so it comes out Catppuccin-coloured while staying Breeze - which
-# also keeps the button layout and the Plasma-native behaviour Aurorae drops.
-kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 --key library "org.kde.breeze"
-kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 --key theme "Breeze"
+# ── the two exclusions, as a function ────────────────────────────────────────
+# WHY A FUNCTION: the Catppuccin Global Theme applied further down carries its
+# own decoration and cursor in contents/defaults -
+#     library=org.kde.kwin.aurorae, theme=__aurorae__svg__CatppuccinLatte-Modern
+#     BorderSize=None, BorderSizeAuto=false
+#     cursorTheme=catppuccin-latte-blue-cursors
+# and applying it writes those into ~/.config/kdedefaults/. These are the two
+# pieces we do NOT want from it, so they are re-asserted in ~/.config/ AFTER the
+# apply, where they outrank the kdedefaults layer. Called twice on purpose.
+assert_overrides() {
+  # Decoration: KDE's own Breeze, recoloured by the scheme. Breeze reads the
+  # scheme's [WM] section, so it comes out Catppuccin-coloured while staying
+  # Breeze - keeping the button layout and the Plasma-native behaviour Aurorae
+  # drops.
+  kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 --key library "org.kde.breeze"
+  kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 --key theme "Breeze"
+  # NB: the borders too, and this is easy to miss. The Global Theme sets
+  # BorderSize=None / BorderSizeAuto=false, so restoring only library+theme
+  # leaves you with Breeze drawn borderless - which does not look like the
+  # default decoration and does not look like a setting anyone chose.
+  kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 --key BorderSize "Normal"
+  kwriteconfig6 --file kwinrc --group org.kde.kdecoration2 --key BorderSizeAuto "true"
 
-# ── icons ────────────────────────────────────────────────────────────────────
-if theme_installed "$ICONS"; then
-  kwriteconfig6 --file kdeglobals --group Icons --key Theme "$ICONS"
-else
-  echo "  kde-theme: icon theme '$ICONS' not installed - keeping the current one"
-  echo "             (packages/desktop.tsv: fluent-icon-theme, via paru)"
-  echo "             this re-applies by itself once it is installed"
-fi
+  # Icons. The Global Theme sets NO icon theme (verified in its contents/defaults),
+  # so this survives it - but assert it anyway rather than relying on that.
+  if theme_installed "$ICONS"; then
+    kwriteconfig6 --file kdeglobals --group Icons --key Theme "$ICONS"
+  else
+    echo "  kde-theme: icon theme '$ICONS' not installed - keeping the current one"
+    echo "             (packages/desktop.tsv: whitesur-icon-theme, via paru)"
+    echo "             this re-applies by itself once it is installed"
+  fi
 
-# ── cursor ───────────────────────────────────────────────────────────────────
-# kcminputrc is what Plasma reads. XWayland clients are handled by Plasma's own
-# kded, which pushes the cursor theme out to them from this same key - there is
-# nothing for this script to write for them.
-if theme_installed "$CURSOR"; then
-  kwriteconfig6 --file kcminputrc --group Mouse --key cursorTheme "$CURSOR"
-  kwriteconfig6 --file kcminputrc --group Mouse --key cursorSize  "$CURSOR_SIZE"
+  # Cursor. kcminputrc is what Plasma reads. XWayland clients are handled by
+  # Plasma's own kded from this same key - nothing extra to write for them.
+  if theme_installed "$CURSOR"; then
+    kwriteconfig6 --file kcminputrc --group Mouse --key cursorTheme "$CURSOR"
+    kwriteconfig6 --file kcminputrc --group Mouse --key cursorSize  "$CURSOR_SIZE"
+  else
+    echo "  kde-theme: cursor theme '$CURSOR' not installed - keeping the current one"
+    echo "             (home/.chezmoiexternal.toml fetches it)"
+    echo "             this re-applies by itself once it is on disk"
+  fi
+}
+assert_overrides
+
+# ── splash screen ────────────────────────────────────────────────────────────
+# The one visual piece catppuccin/kde ships that this repo was not using. Its
+# package is assembled by four externals (see home/.chezmoiexternal.toml) and
+# the assembly is load-bearing: the tarball's splash directory has no Splash.qml
+# in it, and a splash package without one installs, lists, and renders nothing.
+if [ -f "${XDG_DATA_HOME:-$HOME/.local/share}/plasma/look-and-feel/$SPLASH/contents/splash/Splash.qml" ]; then
+  kwriteconfig6 --file ksplashrc --group KSplash --key Engine "KSplashQML"
+  kwriteconfig6 --file ksplashrc --group KSplash --key Theme  "$SPLASH"
 else
-  echo "  kde-theme: cursor theme '$CURSOR' not installed - keeping the current one"
-  echo "             (home/.chezmoiexternal.toml fetches it)"
-  echo "             this re-applies by itself once it is on disk"
+  echo "  kde-theme: splash '$SPLASH' incomplete or absent - leaving the current one"
+  echo "             (expected contents/splash/Splash.qml; see .chezmoiexternal.toml)"
 fi
 
 # ── fonts ────────────────────────────────────────────────────────────────────
@@ -230,6 +264,39 @@ if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] || ! pgrep -x plasmashell >/dev/null 2
   exit 0
 fi
 
+# ── the Global Theme ─────────────────────────────────────────────────────────
+# This is what puts "Catppuccin Latte Blue" in System Settings -> Appearance ->
+# Global Theme and makes it the SELECTED one. Without it the machine had the
+# Catppuccin colours and no Catppuccin theme to point at, which is a confusing
+# state to be in and was read, reasonably, as "the theme was never installed".
+#
+# NB: it MUST run before assert_overrides below, not after. Applying a
+# look-and-feel writes that package's contents/defaults into
+# ~/.config/kdedefaults/ - including the Aurorae decoration and the Catppuccin
+# cursors, which are the two things being excluded here. The order is: apply the
+# theme, then put our two choices back on top of it in ~/.config/, which
+# outranks kdedefaults.
+#
+# NB: --resetLayout is deliberately NOT passed. It would rebuild the panel and
+# widget layout from the package's defaults, discarding whatever the desktop
+# actually looks like. A Global Theme apply is meant to be a re-skin here, not a
+# reset.
+_lnf_dir="${XDG_DATA_HOME:-$HOME/.local/share}/plasma/look-and-feel/$LOOKANDFEEL"
+if [ -f "$_lnf_dir/metadata.json" ] && command -v plasma-apply-lookandfeel >/dev/null 2>&1; then
+  if plasma-apply-lookandfeel --apply "$LOOKANDFEEL" >/dev/null 2>&1; then
+    echo "  kde-theme: global theme '$LOOKANDFEEL' applied"
+  else
+    echo "  kde-theme: plasma-apply-lookandfeel '$LOOKANDFEEL' failed - continuing"
+    echo "             (check: plasma-apply-lookandfeel --list)"
+  fi
+  # Put the decoration, borders, icons and cursor back. See the function's
+  # header for why this is not paranoia.
+  assert_overrides
+else
+  echo "  kde-theme: global theme '$LOOKANDFEEL' not installed - skipping"
+  echo "             (home/.chezmoiexternal.toml fetches it; re-runs by itself)"
+fi
+
 # plasma-apply-colorscheme, not just the kdeglobals key: the ColorScheme key is
 # only the NAME. Plasma resolves it into the [Colors:*] blocks in kdeglobals,
 # and until something does that resolution nothing recolours - which is why a
@@ -264,4 +331,7 @@ command -v qdbus6 >/dev/null 2>&1 &&
 
 # There is no plasma-apply-icontheme; the Icons/Theme key above is read at
 # login, so an icon theme CHANGE is the one thing here that waits for a relog.
-echo "  kde-theme: applied to the running session (icons take effect at next login)"
+# Splash and icons are both read at session start, so neither shows until the
+# next login. Say so rather than implying the screen you are looking at is done.
+echo "  kde-theme: applied to the running session"
+echo "             (icon theme and splash take effect at next login)"

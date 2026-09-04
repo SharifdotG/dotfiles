@@ -33,6 +33,8 @@ kde-gtk-config	kde-gtk-config	skip	skip	themes GTK apps from the Plasma colour s
 # -- fonts ------------------------------------------------------------------
 cascadia-code-nf	ttf-cascadia-code-nerd	skip	skip	PACKAGE name and FAMILY name differ - the fonts inside are Nerd Fonts' patch of Cascadia Code, which renames the family to "CaskaydiaCove Nerd Font" (files: CaskaydiaCoveNerdFont-*.ttf). "Cascadia Code NF" matches NOTHING and fc-match silently substitutes Adwaita Sans; that was live for weeks. scripts/doctor.sh now checks it. Replaced Maple Mono, whose AUR package failed to install in the VM
 adwaita-fonts	adwaita-fonts	skip	skip	ships BOTH "Adwaita Sans" (the system UI font here) and "Adwaita Mono"; only Sans is used - monospace is CaskaydiaCove Nerd Font. Family strings are what ~/.config/fontconfig/fonts.conf matches on, so they are load-bearing - and Adwaita Sans is specifically what a WRONG monospace family falls back to, so a broken mono font looks like "everything is Adwaita" rather than like an error
+mona-sans	ttf-mona-sans	skip	skip	GitHub's own UI font. NOT decoration: github.com's CSS asks for "Mona Sans" first and, with the family absent locally, falls through its own stack to Noto Sans - which is exactly what the site was rendering in. Installing it makes the first entry resolve whether or not the webfont loads (a content blocker's "block remote fonts" is the usual reason it does not)
+monaspace	otf-monaspace	skip	skip	GitHub's code font, the monospace half of the same problem: without it, github.com code blocks fell through to Liberation Mono. NB: the family to check is "Monaspace Neon", not the package name - see the CaskaydiaCove row above for what that mistake costs
 noto-fonts	noto-fonts	skip	skip
 noto-fonts-emoji	noto-fonts-emoji	skip	skip
 noto-fonts-cjk	noto-fonts-cjk	skip	skip
@@ -60,7 +62,7 @@ chatgpt-desktop	skip	chatgpt-desktop	skip	OpenAI's official Linux binary, repack
 # either; the display manager is plasmalogin. The lock screen is themed instead
 # by the colour scheme (which its greeter already follows) plus a wallpaper key,
 # both written by the kde-theme script. See the long note there.
-fluent-icon-theme	skip	fluent-icon-theme	skip	vinceliuice's Fluent icons. The AUR package IS the official install - its PKGBUILD runs upstream's own install.sh --all against a pinned release tag, which is exactly what you would run by hand, minus the untracked files in ~/.local/share/icons. Prefer it over fluent-icon-theme-git: -git rebuilds on every push
+whitesur-icon-theme	skip	whitesur-icon-theme	skip	vinceliuice's WhiteSur icons, replacing Fluent so the icons and the cursors come from the same family - home/.chezmoiexternal.toml already fetches WhiteSur-cursors. The AUR package IS the official install: its PKGBUILD runs upstream's own install.sh against a pinned release tag. Prefer it over whitesur-icon-theme-git, which rebuilds on every push. NB: the installed directory is "WhiteSur" (upstream's THEME_NAME) - that string, not the package name, is what the KDE theme script writes and what its index.theme guard tests
 # -- hardware ---------------------------------------------------------------
 # NB: intel-media-driver moved to packages/gpu-intel.tsv - it is a GPU fact,
 # and setting LIBVA_DRIVER_NAME=iHD on an AMD card kills VA-API outright.

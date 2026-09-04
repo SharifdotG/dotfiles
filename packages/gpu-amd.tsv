@@ -16,6 +16,5 @@ lib32-vulkan-radeon	lib32-vulkan-radeon	skip	skip	the 32-bit half. Required by S
 lib32-mesa	lib32-mesa	skip	skip	32-bit OpenGL. Same reasoning as above
 vulkan-mesa-layers	vulkan-mesa-layers	skip	skip	device-select and overlay layers Mesa ships separately
 lib32-vulkan-mesa-layers	lib32-vulkan-mesa-layers	skip	skip	the 32-bit half
-clinfo	clinfo	skip	skip	provides `clinfo`, the only honest way to ask whether an OpenCL device actually exists. DaVinci Resolve lives or dies on this - see scripts/resolve-opencl.sh
 radeontop	radeontop	skip	skip	live GPU utilisation; the amdgpu answer to intel_gpu_top
 lact	lact	skip	skip	Linux AMDGPU Controller: fan curve, power limit, clocks. Polaris is supported. Needs amdgpu.ppfeaturemask=0xffffffff, which system/apply.sh sets via modprobe.d rather than the bootloader

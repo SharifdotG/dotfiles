@@ -1,18 +1,26 @@
 # Creative / media. Included only when $PROFILE is desktop; --no-creative opts out.
 #
-# NB: the Wine stack that Affinity needs is in gaming.tsv, not here - it is the
-# same wine/wine-mono/wine-gecko/winetricks set, and duplicating rows across
-# manifests would install it twice in the pacman transaction for no reason.
-# Affinity itself is NOT packaged: it needs your own installers and a GUI, so
-# it is a documented one-time manual step. See docs/DESKTOP.md.
+# NB: this file used to be DaVinci Resolve and a 229-line script to make it work.
+# Both are gone, and the reasoning is worth keeping so nobody re-adds them:
+#   1. Free Resolve on Linux cannot decode OR encode H.264/H.265 at all - a
+#      licensing limit, not a bug. Phone video and screen recordings simply do
+#      not import without transcoding every clip first.
+#   2. AMD dropped Polaris/gfx803 from ROCm after 5.7 and the repos ship 7.x,
+#      which enumerates no OpenCL device on an RX 570 - so Resolve would not
+#      even start without pinning four packages to a 2023 release out of the
+#      Arch archive and holding them there with IgnorePkg, forever.
+# Kdenlive goes through ffmpeg, handles H.264/H.265 natively, and decodes on the
+# GPU through VA-API - which the shared "GPU & display stack" doctor step already
+# verifies, so it needs no checks of its own.
 #
-# NB: DaVinci Resolve on this hardware has TWO hard limits, and neither is a
-# bug you can fix:
-#   1. The free version on Linux cannot decode OR encode H.264/H.265 at all.
-#      That is a licensing limit. Transcode to DNxHR with ffmpeg, or buy Studio.
-#   2. AMD dropped Polaris/gfx803 from ROCm after 5.7, and the repos now ship
-#      rocm-opencl-runtime 7.x - which gives Resolve no OpenCL device, so it
-#      will not start. scripts/resolve-opencl.sh pins the runtime back to 5.7.1
-#      and proves it with clinfo. Run it before launching Resolve the first time.
+# NB: Affinity is gone too. It has no Linux build; it ran under Wine, needed its
+# own installers and a GUI, and could never be part of a non-interactive
+# bootstrap. Canva in the browser replaced it. The Wine rows in gaming.tsv stay -
+# Lutris needs them - but they are no longer justified by Affinity.
 #id	arch	aur	nix	notes
-davinci-resolve	skip	davinci-resolve	skip	the free edition. The AUR package only repackages Blackmagic's own installer, so the download is manual-ish and large. Launch it through ~/.local/bin/resolve, which sets ROC_ENABLE_PRE_VEGA=1 - Polaris needs it and setting it globally would affect every other OpenCL consumer
+kdenlive	kdenlive	skip	skip	the video editor. Pulls MLT (its engine) as a hard dependency; the rows below are optdepends worth having rather than discovering mid-edit
+ffmpeg	ffmpeg	skip	skip	listed explicitly even though mpv and obs-studio already drag it in - the editor is the reason it must be present, and a transitive dependency is not a promise
+frei0r-plugins	frei0r-plugins	skip	skip	the transition and effect set Kdenlive's UI offers by default; without it half the effect list is there but does nothing
+mediainfo	mediainfo	skip	skip	stream inspection. The honest way to find out why a clip will not import, rather than guessing at the codec
+kimageformats	kimageformats	skip	skip	Kdenlive optdepend: dds/xcf/exr/psd stills on the timeline
+qt6-imageformats	qt6-imageformats	skip	skip	Kdenlive optdepend: tiff/webp stills

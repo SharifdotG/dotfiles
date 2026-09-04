@@ -54,7 +54,7 @@ _uarch=$(/lib64/ld-linux-x86-64.so.2 --help 2>/dev/null |
 # NB: derived, not hardcoded. It was a literal 11, which was right until the
 # desktop added two more sections and the last one printed "[13/11]" - the same
 # small wrongness bootstrap.sh already avoids by counting rather than guessing.
-UI_STEPS=12
+UI_STEPS=13
 [ "$PROFILE" = desktop ] && UI_STEPS=$(( UI_STEPS + 2 ))
 banner "doctor" "read-only health check · reports, never changes anything"
 info "System: $DISTRO / $DESKTOP / $SESSION_TYPE  (vm: $IS_VM, pkg column: $PKG_COL, ${_uarch:-?})"
@@ -241,6 +241,92 @@ if command -v kreadconfig6 >/dev/null 2>&1; then
   chk "KDE fixed font"           "$_mono_family" \
       "$(kreadconfig6 --file kdeglobals --group General --key fixed 2>/dev/null | cut -d, -f1)"
 fi
+
+# NB: THE CHECK THAT WAS MISSING, AND THE ONE THAT MATTERS MOST HERE.
+# Everything above asks WHICH font answers a name. None of it asks HOW that
+# font is rasterised - and on 2026-09-05 this machine was found rendering with
+# hinting and subpixel antialiasing switched OFF, while every config file in the
+# repo said hintslight + rgb, and this script reported 40/40.
+#
+# Cause: Plasma's Fonts settings module (kcm_fonts.so) re-serialises
+# ~/.config/fontconfig/fonts.conf and APPENDS its own <match target="font">
+# block rather than replacing one. There were 33 of them where chezmoi writes 1,
+# and target="font" edits all fire in document order, so Plasma's had the last
+# word. `chezmoi status` showed the drift; nothing read it.
+#
+# So: read the values fontconfig actually RESOLVES, never the file.
+#   hintstyle 0=none 1=slight 2=medium 3=full   rgba 0=unknown 1=rgb 2=bgr
+#                                               3=vrgb 4=vbgr 5=none
+_rast=$(fc-match -f '%{hintstyle} %{hinting} %{rgba} %{antialias}' sans-serif 2>/dev/null)
+chk "font rasterisation (effective)" "1 True 1 True" "${_rast:-<unreadable>}"
+# The count is the tell, and it names the culprit when the line above goes red.
+# NB: anchored to a line that is ONLY the opening tag. The obvious
+# `grep -c 'match target="font"'` also counts the string where it appears inside
+# this repo's own explanatory comments in that file - which made this check
+# report 3 immediately after a clean apply that had written exactly 1. A check
+# that counts its own documentation is worse than no check.
+_fcblocks=$(grep -cE '^[[:space:]]*<match target="font">[[:space:]]*$' \
+            "${XDG_CONFIG_HOME:-$HOME/.config}/fontconfig/fonts.conf" 2>/dev/null || echo 0)
+chk "fontconfig font blocks"     1 "${_fcblocks:-0}"
+note "  if that is not 1" "System Settings > Fonts appended to it; 'chezmoi apply' restores it"
+
+# NB: escape the hyphen. fc-match parses its argument as a font PATTERN, in
+# which an unescaped "-" starts the size/style section - so `fc-match
+# ui-monospace` asks for the family "ui", matches nothing, substitutes a
+# proportional sans, and looks exactly like a broken alias. It is not. Verified
+# with FC_DEBUG=4, which prints the request pattern as family: "ui".
+chk "ui-monospace -> Caskaydia"  yes "$(case "$(fc-match -f '%{file}' 'ui\-monospace' 2>/dev/null)" in
+    *Caskaydia*) echo yes;; *) echo no;; esac)"
+
+# GitHub asks for these two by name. Absent, its CSS falls through its own stack
+# to Noto Sans and Liberation Mono. Check the FILE, not the family: a missing
+# family does not error, it substitutes - the CaskaydiaCove lesson above.
+for _f in "Mona Sans:Mona" "Monaspace Neon:Monaspace"; do
+  chk "${_f%%:*} resolves"       yes "$(case "$(fc-match -f '%{file}' "${_f%%:*}" 2>/dev/null)" in
+      *"${_f##*:}"*) echo yes;; *) echo no;; esac)"
+done
+
+step "Desktop theme"
+# NB: everything here reads the LIVE key, never the script that wrote it. The
+# specific failure this guards against: applying a Global Theme writes that
+# package's contents/defaults into ~/.config/kdedefaults/, and Catppuccin's
+# carries an Aurorae decoration and its own cursors - the two pieces
+# deliberately NOT wanted. The theme script re-asserts them in ~/.config/
+# afterwards, which outranks kdedefaults. If that re-assert ever stops running,
+# nothing errors: the window borders and the pointer just quietly change.
+_lnf_dir="${XDG_DATA_HOME:-$HOME/.local/share}/plasma/look-and-feel"
+chk "global theme installed"     yes \
+    "$([ -f "$_lnf_dir/Catppuccin-Latte-Blue/metadata.json" ] && echo yes || echo no)"
+# Plasma records the selected package in ~/.config/kdedefaults/package.
+_lnfsel=$(cat "${XDG_CONFIG_HOME:-$HOME/.config}/kdedefaults/package" 2>/dev/null)
+chk "global theme selected"      Catppuccin-Latte-Blue "${_lnfsel:-<unset>}"
+
+if command -v kreadconfig6 >/dev/null 2>&1; then
+  # The exclusions. Aurorae here means the re-assert did not run.
+  chk "decoration (Breeze, not Aurorae)" org.kde.breeze \
+      "$(kreadconfig6 --file kwinrc --group org.kde.kdecoration2 --key library 2>/dev/null)"
+  chk "cursor theme"             "WhiteSur-cursors" \
+      "$(kreadconfig6 --file kcminputrc --group Mouse --key cursorTheme 2>/dev/null)"
+  chk "icon theme"               "WhiteSur" \
+      "$(kreadconfig6 --file kdeglobals --group Icons --key Theme 2>/dev/null)"
+  chk "splash theme"             "Catppuccin-Latte-Blue-splash" \
+      "$(kreadconfig6 --file ksplashrc --group KSplash --key Theme 2>/dev/null)"
+fi
+# NB: and check the splash package is COMPLETE, not just named. Upstream's
+# tarball ships the splash directory WITHOUT Splash.qml - it is copied in from
+# generated/splash-qml/ by their installer, and four chezmoi externals reassemble
+# it here. A package missing it installs, appears in the theme list, and renders
+# nothing: the exact silent-substitution shape this file exists for.
+chk "splash package complete"    yes \
+    "$([ -f "$_lnf_dir/Catppuccin-Latte-Blue-splash/contents/splash/Splash.qml" ] &&
+       [ -f "$_lnf_dir/Catppuccin-Latte-Blue-splash/contents/splash/images/Logo.png" ] &&
+       echo yes || echo no)"
+# Icon themes are keyed off the DIRECTORY name, so a renamed upstream release
+# breaks the theme silently - Plasma falls back per icon rather than erroring.
+chk "icon theme on disk"         yes \
+    "$([ -f /usr/share/icons/WhiteSur/index.theme ] ||
+       [ -f "${XDG_DATA_HOME:-$HOME/.local/share}/icons/WhiteSur/index.theme" ] &&
+       echo yes || echo no)"
 
 step "Lock screen"
 # The lock screen has two theming surfaces and both are checked, because the
@@ -489,23 +575,14 @@ while read -r _t _o; do
   fi
 done <<< "$(findmnt -rno TARGET,OPTIONS -t ntfs3,ntfs,fuseblk 2>/dev/null || true)"
 
-# DaVinci Resolve lives or dies on this single line. AMD dropped Polaris from
-# ROCm after 5.7 and the repos ship 7.x, which enumerates no device at all.
-if ! command -v clinfo >/dev/null 2>&1; then
-  note "OpenCL" "<clinfo not installed: pacman -S clinfo>"
-else
-  _cl=$(ROC_ENABLE_PRE_VEGA=1 clinfo -l 2>/dev/null | grep -c 'Device' || true)
-  chk "OpenCL device visible" yes "$([ "${_cl:-0}" -gt 0 ] && echo yes || echo no)"
-  note "  devices" "${_cl:-0} (Resolve needs at least 1 - see scripts/resolve-opencl.sh)"
-fi
-# NB: and check the PIN is still on. A pacman -Syu that quietly upgraded the
-# runtime back to 7.x is exactly how this breaks again six months from now, so
-# read IgnorePkg out of the LIVE parsed config rather than grepping the file.
-if pacman -Qq rocm-opencl-runtime >/dev/null 2>&1; then
-  note "rocm-opencl-runtime" "$(pacman -Q rocm-opencl-runtime 2>/dev/null | awk '{print $2}')"
-  chk "ROCm held at the pinned version" yes \
-      "$(pacman-conf IgnorePkg 2>/dev/null | grep -qx rocm-opencl-runtime && echo yes || echo no)"
-fi
+# NB: there is deliberately no OpenCL or ROCm check here any more. Both existed
+# only for DaVinci Resolve, which is gone - see packages/creative.tsv for why.
+# Kdenlive decodes through VA-API, and that IS checked, once, in the shared
+# "GPU & display stack" step above rather than a second time here.
+chk "kdenlive installed" yes "$(command -v kdenlive >/dev/null && echo yes || echo no)"
+chk "heroic installed" yes \
+    "$(command -v heroic >/dev/null 2>&1 && echo yes ||
+       { pacman -Qq heroic-games-launcher-bin >/dev/null 2>&1 && echo yes || echo no; })"
 
 fi
 
