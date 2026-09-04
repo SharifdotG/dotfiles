@@ -16,3 +16,11 @@ home/.chezmoi.toml
 mcp-servers.json
 agents-skills.tar.gz
 databases.tsv
+
+# Agent instructions, machine-local on purpose. CLAUDE.md carries how Claude
+# Code should work in this repo (commit at the end of a session, no
+# Co-Authored-By trailer, and the "never trust a config file - read the live
+# value back" rule the doctor checks exist to enforce). It is deliberately NOT
+# tracked: the repo is public, and this is a personal working preference rather
+# than something a reader of the dotfiles needs or should inherit.
+CLAUDE.md

@@ -309,6 +309,48 @@ fs.inotify.max_user_instances = 1024
 sudo sysctl --system
 ```
 
+> **⚠️ `sysctl --system` IS NOT ENOUGH ON CachyOS — a udev rule overwrites `vm.swappiness`
+> afterwards.** Found 2026-09-04, by `scripts/doctor.sh` reporting 150 on a machine where
+> the file above plainly said 180 *and* `systemd-analyze cat-config sysctl.d` agreed:
+>
+> ```console
+> $ sysctl -n vm.swappiness
+> 150
+> $ grep -rn swappiness /usr/lib/udev/rules.d/
+> /usr/lib/udev/rules.d/30-zram.rules:13:ACTION=="change", KERNEL=="zram0", \
+>     ATTR{initstate}=="1", SYSCTL{vm.swappiness}="150", ...
+> $ pacman -Qo /usr/lib/udev/rules.d/30-zram.rules
+> ... is owned by cachyos-settings
+> ```
+>
+> **This is not a sysctl-ordering problem, so no amount of renaming the sysctl file fixes
+> it.** `sysctl --system` runs *once*, early in boot. The udev rule runs *after* it — when
+> zram0 comes up — and again on every subsequent zram0 `change` event. It always has the
+> last word. `system/apply.sh` restarts `systemd-zram-setup@zram0`, which fires exactly
+> that event, so **applying this repo was itself resetting swappiness moments after
+> setting it**.
+>
+> The counter is another udev rule, because udev is the only thing still running when the
+> clobber happens — `system/udev/rules.d/99-zram-swappiness.rules`, installed by
+> `system/apply.sh`:
+>
+> ```ini
+> ACTION=="change", KERNEL=="zram0", ATTR{initstate}=="1", SYSCTL{vm.swappiness}="180"
+> ```
+>
+> `99-` sorts after `30-`, udev evaluates rule files in filename order across `/etc`,
+> `/run` and `/usr/lib` merged, and `SYSCTL{}` is written as the token is reached — so the
+> later assignment sticks. It deliberately does **not** shadow `30-zram.rules` by reusing
+> its basename (the trick documented for the vendor *sysctl* file), because that rule also
+> disables zswap and shadowing would mean carrying a stale copy of that line forever.
+>
+> **The general lesson, and it applies to more than swappiness:** a kernel tunable can be
+> written by sysctl, udev, a systemd unit, a tmpfiles rule or the kernel command line.
+> Reading the config file back proves nothing. Read the kernel:
+> ```bash
+> sysctl -n vm.swappiness      # the only answer that counts
+> ```
+
 ### 🔫 Layer 2 — systemd-oomd, tuned
 
 **`systemd-oomd` is NOT enabled by default on Arch or CachyOS** — Fedora switched it on via a preset, and Arch's default preset is `disable *`. `system/apply.sh` enables it explicitly, and until it does, every drop-in below is inert. Its out-of-the-box settings (kill at 60%–80% memory pressure sustained for 20s–30s) react too slowly under heavy workloads. Fedora also shipped a per-slice default that overrode service-level limits, so these drop-ins were *corrective* there. On Arch there is no such default, which makes the user-slice drop-in below the **only** thing setting the limit - additive, and more load-bearing rather than less.
@@ -1133,20 +1175,64 @@ they fail on a machine with no `flatpak` binary.
 
 ### 🔤 The coding font
 
-**Cascadia Code NF** — `ttf-cascadia-code-nerd`, in the Arch repos, installed by
+**CaskaydiaCove Nerd Font** — `ttf-cascadia-code-nerd`, in the Arch repos, installed by
 `bootstrap.sh`. Nothing to download by hand.
 
-> **NB — the family string is `Cascadia Code NF`, not `Cascadia Code Nerd Font`.**
-> fontconfig matches on the name in the font's own name table, and the Nerd Font build
-> reports "NF". Give it the wrong string and fontconfig silently substitutes some other
-> monospace — no error, just the wrong font. Check with:
-> ```bash
-> fc-match 'Cascadia Code NF'
+> **⚠️ CORRECTION, 2026-09-04 — the family string was wrong everywhere, and it failed
+> silently for weeks.** This section used to say the family was `Cascadia Code NF`, "not
+> `Cascadia Code Nerd Font`". Both are wrong. `fonts.conf`, `config.ghostty`, the VS Code
+> settings and the KDE theme script all asked for a family that **does not exist on this
+> machine**:
+>
+> ```console
+> $ fc-match 'Cascadia Code NF'
+> AdwaitaSans-Regular.ttf: "Adwaita Sans" "Regular"
 > ```
+>
+> Every monospace context on the machine — terminal, editor, KDE's fixed font — was
+> rendering in a **proportional sans**, and nothing anywhere reported an error.
+>
+> **The cause is that the package name and the font name are different things.** The Arch
+> package is named after Microsoft's Cascadia Code, but the fonts inside it are Nerd
+> Fonts' *patch* of it, and the patch renames the family to Caskaydia Cove:
+>
+> ```console
+> $ pacman -Ql ttf-cascadia-code-nerd | grep -c TTF
+> 54
+> $ pacman -Ql ttf-cascadia-code-nerd | grep -m1 TTF
+> /usr/share/fonts/TTF/CaskaydiaCoveNerdFont-Bold.ttf
+> ```
+>
+> The families it actually registers:
+>
+> | Family | What it is |
+> |---|---|
+> | `CaskaydiaCove Nerd Font` | **what this repo uses** — icons at their design width |
+> | `CaskaydiaCove Nerd Font Mono` | icons squeezed into a single cell |
+> | `CaskaydiaCove Nerd Font Propo` | proportional; never for a terminal |
+> | `CaskaydiaCove NF` / `NFM` / `NFP` | abbreviated aliases of the same files |
+>
+> Non-Mono is deliberate: Ghostty handles a glyph wider than one cell correctly, and
+> Starship's powerline separators want their design width. Avoid the abbreviated `NF`
+> aliases — they also register every weight as its own family (`CaskaydiaCove NF
+> SemiLight`, …), which makes bold/italic selection worse.
+
+> **NB — fontconfig substitutes, it does not fail, and that is the whole lesson here.**
+> There is no error to grep for, no warning at startup, and `ghostty +show-config` happily
+> echoes back a family that resolves to nothing. The only honest test is to ask fontconfig
+> what a name actually resolves to, and to check the **file** it returns rather than the
+> family:
+> ```bash
+> fc-match 'CaskaydiaCove Nerd Font'   # must name a CaskaydiaCove*.ttf
+> fc-match monospace                   # the generic, after fonts.conf's prepend
+> ```
+> `scripts/doctor.sh` now has a **Fonts** section that runs exactly these, plus a check
+> that KDE's `fixed` key in `kdeglobals` agrees with `fonts.conf` — the two drift
+> independently, because System Settings can change one without touching the other.
 
 This replaced **Maple Mono NF**, for two reasons. The AUR package
-(`ttf-maplemono-nf-unhinted`) failed to install during VM testing, and Cascadia is in the
-official repos — one fewer AUR dependency in the critical path. Maple's stylistic sets also
+(`ttf-maplemono-nf-unhinted`) failed to install during VM testing, and Cascadia Code is in
+the official repos — one fewer AUR dependency in the critical path. Maple's stylistic sets also
 did not survive the move; see the Ghostty section.
 
 ### 🖥 Ghostty
@@ -1168,7 +1254,7 @@ deleted:
 | Setting | Value | Was |
 |---|---|---|
 | `theme` | `Catppuccin Latte` | *nothing* — bundled with Ghostty, no external file needed |
-| `font-family` / `font-size` | Cascadia Code NF, 10 | was Maple Mono NF; the guide once said 11pt, the profile said 10 |
+| `font-family` / `font-size` | CaskaydiaCove Nerd Font, 10 | was Maple Mono NF, then the non-existent "Cascadia Code NF"; the guide once said 11pt, the profile said 10 |
 | `font-feature` | `calt`, `zero` | matches `editor.fontLigatures` in the VS Code settings exactly |
 | `window-width` / `window-height` | 125 × 30 | Konsole `TerminalColumns`/`TerminalRows` |
 | `cursor-style` | `bar` | Konsole `CursorShape=1` |
@@ -1178,8 +1264,10 @@ deleted:
 
 > **NB — the font-feature list shrank from 16 entries to 2, and that is a fix rather than a
 > loss.** The old list (`cv03`, `cv05`, `cv09`, `cv10`, `cv61`, `cv38`, `cv42`, `cv43`,
-> `ss03`, `ss07`–`ss11`) named *Maple Mono's* stylistic sets. Cascadia Code NF does not have
-> them. Read straight out of the font's GSUB table, its complete feature set is:
+> `ss03`, `ss07`–`ss11`) named *Maple Mono's* stylistic sets. Caskaydia Cove does not have
+> them. (Re-verified 2026-09-04 against the installed `CaskaydiaCoveNerdFont-*.ttf` rather
+> than upstream's `CascadiaCodeNF-*.otf`: the tag list below is unchanged, so only the file
+> names in this note needed correcting.) Read straight out of the font's GSUB table, its complete feature set is:
 >
 > ```
 > aalt calt case ccmp dnom fina frac init locl medi numr ordn
@@ -1199,7 +1287,7 @@ deleted:
 > t={d[12+i*16:16+i*16].decode('latin1'):u32(12+i*16+8) for i in range(u16(4))}
 > b=t['GSUB']; f=b+u16(b+6)
 > print(sorted({d[f+2+i*6:f+6+i*6].decode('latin1') for i in range(u16(f))}))
-> " "$(fc-match -f '%{file}' 'Cascadia Code NF')"
+> " "$(fc-match -f '%{file}' 'CaskaydiaCove Nerd Font')"
 > ```
 
 > **NB — `scrollback-limit` is in BYTES, not lines**, despite the name, and Ghostty's
@@ -1433,7 +1521,7 @@ All of this is applied by `home/.chezmoiscripts/run_onchange_after_20-kde-theme.
 | Icons | Fluent | `packages/desktop.tsv` → AUR `fluent-icon-theme` |
 | Cursors | WhiteSur | `.chezmoiexternal.toml` → archive external |
 | UI font | Adwaita Sans 10 | `packages/desktop.tsv` → `adwaita-fonts` |
-| Mono font | Cascadia Code NF 10 | already there for Ghostty |
+| Mono font | CaskaydiaCove Nerd Font 10 | already there for Ghostty |
 | Wallpaper | Catppuccin Latte | committed, `~/.local/share/wallpapers/Catppuccin-Latte` |
 
 Four decisions in there are load-bearing:
@@ -1459,6 +1547,75 @@ Four decisions in there are load-bearing:
   GTK mistake in `home/.chezmoiignore` all over again. `kwriteconfig6` writes the handful of keys
   we care about through the same API System Settings uses and leaves the rest of each file alone.
 
+### 🔒 The lock screen
+
+**There is no Catppuccin lock screen to install.** That is worth stating flatly, because it
+looks like there should be one. Checked 2026-09-04:
+
+- `catppuccin/kde` (both `v0.4.0` and `main`) ships colour schemes, an Aurorae decoration, a
+  splash and four look-and-feel packages — and those look-and-feel packages contain **only**
+  `contents/defaults` plus `metadata.json`. Searching the whole repository for
+  `LockScreen*.qml` returns nothing. So `plasma-apply-lookandfeel Catppuccin-Latte-Blue`
+  would not theme the lock screen either; it would just replace the Breeze decoration
+  decision above with Aurorae and the WhiteSur cursor with `catppuccin-latte-blue-cursors`.
+- Catppuccin's ports list has an **SDDM** theme, but no `kscreenlocker` port — and this
+  machine does not run SDDM anyway. The display manager here is **plasmalogin**
+  (`/etc/systemd/system/display-manager.service → plasmalogin.service`), KDE's SDDM
+  replacement, which has no Catppuccin port at all.
+
+So the lock screen has exactly two theming surfaces, and the kde-theme script now covers
+both:
+
+| Surface | How it is themed | Needs writing? |
+|---|---|---|
+| Colours | inherited from the colour scheme | **no** — already free |
+| Wallpaper | `kscreenlockerrc` | **yes** — this was the gap |
+
+**Colours are free, and this is not a guess.** `kscreenlocker_greet` renders with the Plasma
+style named in `plasmarc` (`[Theme] name=default`). That style ships **no `colors` file** —
+`ls /usr/share/plasma/desktoptheme/default/` has none — which is how a Plasma style declares
+"follow the system colour scheme". So the greeter reads `CatppuccinLatteBlue` out of
+`kdeglobals` like everything else. **Setting the colour scheme *is* theming the lock
+screen's colours**; there is no second key.
+
+**The wallpaper is the part that was actually wrong.** Left alone the greeter falls back to
+the look-and-feel default — Plasma's stock "Next" — which is how the desktop ended up
+Catppuccin while the lock screen did not. The key names come from the greeter binary rather
+than from a blog post:
+
+```bash
+strings /usr/lib/libKScreenLocker.so.6 | grep -i wallpaperplugin
+# -> wallpaperPluginId
+```
+
+and the plugin's own config nests under it, the same shape Plasma uses for the desktop
+containment in `plasma-org.kde.plasma.desktop-appletsrc`:
+
+```ini
+[Greeter]
+wallpaperPluginId=org.kde.image
+
+[Greeter][Wallpaper][org.kde.image][General]
+Image=/home/<you>/.local/share/wallpapers/Catppuccin-Latte/contents/images/3840x2160.png
+PreviewImage=<same>
+```
+
+> **NB — a plain absolute path, not a `file://` URL.** Both parse, but the plain form is
+> what Plasma itself writes for a system wallpaper, and it sidesteps URL-encoding a home
+> directory. `PreviewImage` is only what the System Settings page shows in its thumbnail —
+> omitting it is not a functional bug, it just makes the KCM look like the wallpaper is
+> unset when it is not.
+
+> **NB — unlike the desktop wallpaper there is no `plasma-apply-*` helper for this**, and
+> unlike `appletsrc`, `kscreenlockerrc` is **not** a file Plasma rewrites behind your back —
+> the greeter only reads it, at lock time. So `kwriteconfig6` is the whole mechanism, it
+> needs no live session, and it takes effect at the very next lock with **no relog**.
+
+`scripts/doctor.sh` has a **Lock screen** section that checks the colour scheme, that the
+wallpaper key is set to a Catppuccin path, and that the path actually exists — the last one
+because a key naming a missing file fails over silently to exactly the same result as no key
+at all.
+
 > **NB — `~/.config/kdedefaults/` is where a Global Theme's *declared* values live**, separate
 > from your overrides in `~/.config/*rc`. If you ever need to know what a theme wanted versus
 > what you actually run, diff those two. It is also the only reliable way to recover a previous
@@ -1472,7 +1629,7 @@ for **this panel specifically**: 14" 1920×1080 ≈ 157 ppi.
 
 - **`hintslight`, not `hintfull`.** Full hinting snaps stems to the pixel grid, which at 157 ppi
   visibly distorts letterforms and ruins spacing. Slight hinting aligns vertically only and keeps
-  the designed shape — and it is what Adwaita Sans (an Inter derivative) and Cascadia are drawn
+  the designed shape — and it is what Adwaita Sans (an Inter derivative) and Cascadia Code are drawn
   for. `hintnone` would just be blurry.
 - **`autohint` off.** With `hintslight`, FreeType's own interpreter beats the autohinter on fonts
   that ship good hints, and both of ours do. Turning it on is the classic "my fonts look wrong
@@ -1484,8 +1641,9 @@ for **this panel specifically**: 14" 1920×1080 ≈ 157 ppi.
 - **`binding="strong"` on the family prepends.** With the default weak binding, a request that
   already names a family — which is most of them, Qt and GTK both send one — keeps its own and
   the prepend is ignored. That is how you get a desktop that only half-changes font.
-- **The family string is `Cascadia Code NF`, not `Cascadia Code`.** The Nerd Font build registers
-  under its own name; the plain name silently resolves to an unpatched Cascadia with no powerline
+- **The family string is `CaskaydiaCove Nerd Font`.** Not `Cascadia Code`, and not
+  `Cascadia Code NF` — see the correction in Phase 6. The Nerd Font build registers
+  under its own name; a wrong name silently resolves to Adwaita Sans with no powerline
   glyphs, which is how Starship and `eza` start drawing tofu.
 
 > Plasma does **not** read `fonts.conf` to choose its own UI font — that lives in `kdeglobals`
@@ -1589,6 +1747,50 @@ docker system df                    # see what's actually taking space
 ```
 
 ### 🩺 Health check
+
+```bash
+./scripts/doctor.sh     # the whole report; exit status is the contract
+```
+
+> **⚠️ Never run `doctor.sh` with `sudo`.** It refuses, and the refusal is the point.
+> Nearly every check reads *your* home and *your* session — `~/.zshrc`, `~/.config/*`,
+> `zsh -ic`, `fc-match`, `kreadconfig6`, `systemctl --user`. Under `sudo`, `HOME` becomes
+> `/root` and there is no user session bus, so **about ten checks go red at once** and a
+> perfectly healthy machine reads as broken. This guide briefly told you to do it, via a
+> `<needs root: sudo scripts/doctor.sh>` hint in the report itself — that hint was wrong and
+> is now a `id -u` guard that exits 2 with an explanation.
+>
+> Exactly two numbers in the report need privilege, and neither is worth dragging the whole
+> run to root. The report names the command for each:
+>
+> ```bash
+> sudo du -sh /var/lib/systemd/coredump    # only if the plain `du` could not read it
+> sudo snapper -c root list                # snapper's ALLOW_USERS is empty by default,
+>                                          # so a normal user gets "No permissions."
+> ```
+
+**Reading the report.** Only lines with `✓`/`✗` are checks — the indented lines under them
+are *notes*, and a note is context, not a failure. A blank or `0` note usually means
+"nothing here yet", which on a freshly-rebuilt machine is the correct answer: `extensions
+installed 0` before you have restored VS Code, `brave not running` when it is closed,
+`OOM kills, last 7d 0` when nothing has been killed. The bar at the bottom counts only real
+checks, and the **exit status** is the contract.
+
+**The one note that is genuine homework: `/etc .pacnew files`.** pacman never overwrites a
+config you have edited; it drops the new version alongside as `.pacnew` and says nothing
+afterwards. Left alone, `pacman.conf.pacnew` in particular is how the machine breaks weeks
+later with no error at the time — a maintenance duty Fedora never imposed. The report now
+names the files rather than just counting them, because the right action differs per file:
+
+```bash
+sudo pacdiff              # from pacman-contrib, already installed
+sudo DIFFPROG=nvim pacdiff   # or pick your own three-way diff
+```
+
+Mirrorlists are almost always safe to take wholesale (`O`verwrite); `pacman.conf` wants a
+real look, since your repo-tier choice from Phase 2 lives in it and the `.pacnew` will not
+have it; `resolv.conf` is usually owned by NetworkManager or systemd-resolved, so check
+what manages it before touching it.
 
 ```bash
 mem                     # RAM + zram state

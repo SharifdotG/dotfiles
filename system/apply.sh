@@ -55,6 +55,13 @@ install_file systemd/system/user@.service.d/99-oomd.conf  /etc/systemd/system/us
 install_file systemd/user/slice.d/99-oomd-user-slice.conf /etc/systemd/user/slice.d/99-oomd-user-slice.conf
 install_file systemd/system/earlyoom.service.d/99-args.conf \
              /etc/systemd/system/earlyoom.service.d/99-args.conf
+# NB: a UDEV rule, not a sysctl one, and it is not redundant with the sysctl.d
+# file above. CachyOS's /usr/lib/udev/rules.d/30-zram.rules resets
+# vm.swappiness to 150 on every zram0 `change` event - which happens at boot
+# AFTER `sysctl --system`, and again a few lines below when this script
+# restarts systemd-zram-setup@zram0. The full derivation is in the file.
+install_file udev/rules.d/99-zram-swappiness.rules \
+             /etc/udev/rules.d/99-zram-swappiness.rules
 
 info "Journal + coredump size caps"
 install_file journald.conf.d/99-size-cap.conf             /etc/systemd/journald.conf.d/99-size-cap.conf
@@ -68,6 +75,11 @@ install_file docker/daemon.json                           /etc/docker/daemon.jso
 
 info "Reloading"
 sysctl --system >/dev/null && ok "sysctl reloaded"
+# NB: udevadm control --reload only makes udev re-read the RULES. It does not
+# re-evaluate them against existing devices - that is what the zram trigger
+# further down does, via the restart.
+udevadm control --reload >/dev/null 2>&1 && ok "udev rules reloaded" ||
+  warn "udevadm control --reload failed"
 systemctl daemon-reload            && ok "systemd reloaded"
 systemctl restart systemd-journald && ok "journald restarted"
 
@@ -94,6 +106,13 @@ if swapon --show=NAME --noheadings 2>/dev/null | grep -q zram; then
 fi
 systemctl restart systemd-zram-setup@zram0.service 2>/dev/null &&
   ok "zram reconfigured" || warn "zram restart failed - check 'zramctl'"
+# The restart above fires the zram0 `change` event that both 30-zram.rules and
+# our 99- rule react to, so swappiness is settled by the post-check below. If
+# zram did NOT restart, nothing re-evaluated the rules against the live device -
+# force it, or the post-check reports 150 on a machine that is actually fine
+# after a reboot.
+udevadm trigger --action=change /sys/block/zram0 >/dev/null 2>&1 || true
+udevadm settle --timeout=5 >/dev/null 2>&1 || true
 
 if systemctl is-active --quiet docker; then
   systemctl restart docker; ok "docker restarted"
@@ -107,15 +126,31 @@ info "Vendor defaults being shadowed"
 for v in /usr/lib/systemd/zram-generator.conf /usr/lib/sysctl.d/*cachyos*.conf; do
   if [ -e "$v" ]; then info "  shadowing $v"; fi
 done
+# Not shadowed - overridden after the fact, which is a different relationship
+# and worth naming differently. 30-zram.rules still runs; our 99- rule just has
+# the last word on vm.swappiness.
+# NB: `if`, not `[ ... ] && info`. Under `set -e` a bare test-and-command whose
+# test is FALSE is a failing command at the top level and aborts the whole
+# script - the same trap enable_unit() exists to contain.
+if [ -e /usr/lib/udev/rules.d/30-zram.rules ]; then
+  info "  overriding vm.swappiness from /usr/lib/udev/rules.d/30-zram.rules"
+fi
 
 info "Post-checks"
 # NB: read the KERNEL back, not the file we just wrote. sysctl.d files from
 # /etc, /run and /usr/lib are merged in FILENAME order across all three
 # directories - only an identical basename in /etc masks a /usr/lib file. Ours
 # sorts after CachyOS's by luck of the alphabet, not by design, so verify.
+# NB: and read it back AFTER the udev trigger above, not before. This check was
+# already here and was already correct to distrust the file - what it could not
+# say was WHERE a wrong value comes from, so it sent you to cat-config for a
+# clobber that sysctl.d has nothing to do with. 150 means udev won.
 sw=$(sysctl -n vm.swappiness 2>/dev/null || echo '?')
 [ "$sw" = 180 ] && ok "vm.swappiness = 180" ||
-  warn "vm.swappiness is $sw, expected 180 - check 'systemd-analyze cat-config sysctl.d'"
+  warn "vm.swappiness is $sw, expected 180 - if it is 150 the zram udev rule won:
+       check /etc/udev/rules.d/99-zram-swappiness.rules is installed, then
+       'udevadm trigger --action=change /sys/block/zram0'.
+       Otherwise: 'systemd-analyze cat-config sysctl.d'"
 
 steps_end
 info "Done. Verify with: scripts/doctor.sh"

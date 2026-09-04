@@ -1,0 +1,40 @@
+# Re-assert vm.swappiness AFTER udev has finished with zram0.
+#
+# WHY THIS FILE EXISTS - the fix for the one check doctor.sh kept failing:
+#     ✗ vm.swappiness   150 (want: 180)
+# on a machine where /etc/sysctl.d/99-memory-tuning.conf plainly said 180 and
+# `systemd-analyze cat-config sysctl.d` agreed. The value was correct and then
+# something changed it back.
+#
+# That something is NOT sysctl. It is udev:
+#     /usr/lib/udev/rules.d/30-zram.rules   (cachyos-settings)
+#     ACTION=="change", KERNEL=="zram0", ATTR{initstate}=="1",
+#         SYSCTL{vm.swappiness}="150", RUN+="... zswap off"
+#
+# So the ordering at boot is: sysctl --system sets 180, then zram0 comes up and
+# fires a `change` event, and udev sets 150. sysctl.d cannot win this because it
+# is not competing - it runs once, early, and the udev rule runs afterwards and
+# again on every subsequent zram0 change event. system/apply.sh restarts
+# systemd-zram-setup@zram0.service, which fires exactly that event, so applying
+# this repo was itself resetting swappiness moments after setting it.
+#
+# THE FIX has to be another udev rule, because only udev is still running when
+# the clobber happens. 99- sorts after 30-, udev evaluates rule files in
+# filename order across /etc, /run and /usr/lib merged, and SYSCTL{} is written
+# as the token is reached - so the later assignment is the one that sticks.
+#
+# WHY NOT SHADOW 30-zram.rules by putting an identical basename in /etc, which
+# is the trick documented in system/sysctl.d/99-memory-tuning.conf for the
+# vendor sysctl file: because the vendor rule does a SECOND thing we want -
+# `echo N > /sys/module/zswap/parameters/enabled`. Shadowing means copying that
+# line into our file and then silently keeping a stale copy of it forever if
+# cachyos-settings ever changes it. Adding one line and leaving the vendor rule
+# to run is the smaller lie.
+#
+# NB: this is one of the very few things in this repo that CANNOT be verified
+# from the file. Read the kernel back, never this file:
+#     sysctl -n vm.swappiness
+# system/apply.sh does that after reloading, and scripts/doctor.sh does it on
+# every run. See system/sysctl.d/99-memory-tuning.conf for why 180 and not the
+# usual "keep swappiness low" advice - zram is RAM, not a disk.
+ACTION=="change", KERNEL=="zram0", ATTR{initstate}=="1", SYSCTL{vm.swappiness}="180"
