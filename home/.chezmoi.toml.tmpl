@@ -8,11 +8,13 @@
 */ -}}
 {{- $desktop := promptStringOnce . "desktop" "Desktop session (plasma/none)" "plasma" -}}
 {{- /*
-     Host for a private/work git remote that needs the generic credential
-     helper. Kept out of the repo on purpose: this repo is public (see
+     Hostname of a private/work git forge. Read by scripts/git-credentials.sh,
+     which stores a PAT for it alongside the github.com one.
+
+     Kept out of the repo on purpose: this repo is public (see
      scripts/secrets-setup.sh), and a hostname is inventory disclosure even
-     though it is not a credential. Leave BLANK if you have none - dot_gitconfig
-     omits the whole section then.
+     though it is not a credential. Leave BLANK if you have none - the script
+     then just does github.com, and `--host` adds any other on the fly.
 */ -}}
 {{- $workGitHost := promptStringOnce . "workGitHost" "Private git host for the generic credential helper (blank for none)" "" -}}
 

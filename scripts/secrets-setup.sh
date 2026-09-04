@@ -25,6 +25,10 @@ else
   warn "gh not installed"
 fi
 
+step "Next"
+echo "  ./scripts/git-credentials.sh   store a PAT for github.com and your private"
+echo "                                 forge, so HTTPS git stops asking every time"
+
 step "Not managed here (by design)"
 cat <<'EOS'
   ~/.npmrc, ~/.nuget/NuGet.Config   registry tokens

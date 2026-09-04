@@ -7,6 +7,7 @@
 #id	arch	aur	nix	notes
 git	git	skip	git
 git-lfs	git-lfs	skip	git-lfs
+libsecret	libsecret	skip	skip	git's own optdepend, and the reason scripts/git-credentials.sh can store a PAT encrypted instead of in plaintext. Arch ships git-credential-libsecret INSIDE the git package (/usr/lib/git-core/), but not the library it links against - without this row the helper is present and non-functional. The other half, org.freedesktop.secrets, comes from kwallet, which Plasma already pulls in, so it is not listed here
 gh	github-cli	skip	gh
 zsh	zsh	skip	zsh
 bat	bat	skip	bat

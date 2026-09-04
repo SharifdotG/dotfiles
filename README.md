@@ -34,7 +34,7 @@ on anything that is not Arch-derived; see `docs/MIGRATION.md` for how the machin
 | `packages/*.tsv` | Logical package id → real name per source (`arch`, `aur`). Plain TSV, parsed with awk. |
 | `os/cachyos/prep.sh` | Repo tier, pacman settings and the AUR helper — everything that must be right *before* packages install. |
 | `system/` | The `/etc` drop-ins that keep the machine from freezing. Applied by an explicit `sudo`. |
-| `scripts/` | `reclaim.sh`, `secrets-setup.sh`, `doctor.sh`. |
+| `scripts/` | `reclaim.sh`, `secrets-setup.sh`, `git-credentials.sh`, `doctor.sh`. |
 | `docs/SETUP-GUIDE.md` | The long-form guide. This repo is its executable half. |
 | `docs/MIGRATION.md` | The one-time move off Fedora KDE. A runbook, not a reference. |
 
@@ -46,6 +46,7 @@ sudo usermod -aG docker "$USER"
 sudo usermod -aG kvm "$USER"    # only for Claude Desktop's Cowork tab (QEMU/KVM VM)
 ./scripts/reclaim.sh        # reclaim disk: pacman cache, orphans, coredumps
 ./scripts/secrets-setup.sh  # generate an SSH key, sign in to GitHub
+./scripts/git-credentials.sh # store a PAT per host so HTTPS git stops prompting
 ./scripts/doctor.sh         # verify
 ```
 
@@ -77,8 +78,16 @@ pattern is worth knowing because it caused real confusion during the migration:
 ## Secrets
 
 None are stored here. `scripts/secrets-setup.sh` *generates* an SSH key and runs
-`gh auth login`. A fresh key per machine beats a synced one, and it means this repo can be
-public. `~/.ssh`, `~/.config/gh`, `~/.npmrc`, NuGet config and `~/.docker/config.json` are
+`gh auth login`; `scripts/git-credentials.sh` *prompts* for a Personal Access Token per host
+and hands it to git's credential helper, which puts it in the desktop keyring — so HTTPS
+remotes stop asking without a token ever touching this tree. A fresh key per machine beats a
+synced one, and it means this repo can be public.
+
+> The one config file those scripts do write, `~/.config/git/credentials.inc`, is deliberately
+> *not* chezmoi-managed: `git config --global` writes `~/.gitconfig`, which chezmoi
+> regenerates, so anything stored there would silently vanish on the next `apply`.
+> `home/dot_gitconfig.tmpl` pulls it in with `[include]` instead, and git ignores the include
+> when the file is absent. `~/.ssh`, `~/.config/gh`, `~/.npmrc`, NuGet config and `~/.docker/config.json` are
 excluded in both `.gitignore` and `.chezmoiignore`.
 
 That design was vindicated by the migration: the outgoing machine had **no SSH keypair and

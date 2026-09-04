@@ -215,5 +215,6 @@ cat <<'EOS'
                                     Claude Code work without it.
   ./scripts/reclaim.sh        reclaim disk: pacman cache, orphans, coredumps
   ./scripts/secrets-setup.sh  generate an SSH key and sign in to GitHub
+  ./scripts/git-credentials.sh  store a PAT per host so git stops prompting
   ./scripts/doctor.sh         verify everything
 EOS

@@ -28,13 +28,17 @@
 	process = git-lfs filter-process
 	required = true
 
-{{/*
-     NB: hasKey, not a bare `.workGitHost`. chezmoi runs templates with
-     missingkey=error, so a chezmoi.toml written before this key existed - i.e.
-     every machine already set up - would abort `chezmoi apply` outright rather
-     than just skipping the section.
-*/ -}}
-{{ if and (hasKey . "workGitHost") (ne (printf "%v" (.workGitHost | default "")) "") -}}
-[credential "https://{{ .workGitHost }}"]
-	provider = generic
-{{ end -}}
+# Machine-local credential config, written by scripts/git-credentials.sh.
+#
+# It names the credential helper; the tokens themselves live in the keyring, so
+# neither the secret nor this include's contents are ever in the repo. It is a
+# separate file because `git config --global` writes THIS file, which chezmoi
+# regenerates - anything the script wrote here would vanish at the next apply.
+#
+# NB: git silently ignores an include path that does not exist (verified), so a
+# machine that has never run the script is not broken by this line.
+#
+# NB: this must be the LAST include - git applies included values where the
+# include appears, so anything after it would win over the helper.
+[include]
+	path = ~/.config/git/credentials.inc

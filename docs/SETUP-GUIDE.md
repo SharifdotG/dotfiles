@@ -1340,6 +1340,52 @@ ssh-keygen -t ed25519 -C "sharifmdyousuf007@gmail.com"
 gh auth login
 ```
 
+> Also set `index.skipHash = false`. `feature.manyFiles` turns it *on*, which writes an index
+> with a zeroed trailing checksum — fine for git itself, rejected by **libgit2**, which is what
+> GitKraken uses. The failure reads like repository corruption. `home/dot_gitconfig.tmpl` pins
+> it off explicitly.
+
+### 🔑 HTTPS credentials: stop retyping the token
+
+SSH covers the remotes you cloned over SSH. Everything cloned over **HTTPS** — which is most
+things you `git clone` from a browser URL — asks again on every fetch and push.
+
+On Plasma the prompt is a **KDE dialog**, not a terminal prompt, and that detail matters: git
+falls back to an askpass program before it falls back to the terminal, and Plasma exports
+`SSH_ASKPASS=/usr/bin/ksshaskpass`. So `GIT_TERMINAL_PROMPT=0` does not silence it, and any
+script that expects "no credential ⇒ no output" will sit waiting on a window instead.
+
+The fix is a credential helper. `scripts/git-credentials.sh` sets one up for **github.com** and
+for your private forge, with a Personal Access Token each:
+
+```bash
+./scripts/git-credentials.sh              # set up / refresh every host
+./scripts/git-credentials.sh --status     # what is stored, never the token itself
+./scripts/git-credentials.sh --forget HOST
+```
+
+Three things about it are deliberate:
+
+- **The token goes in the keyring, not on disk.** The helper is
+  `git-credential-libsecret`, which Arch ships *inside* the `git` package
+  (`/usr/lib/git-core/`) — but not the library it links against, so `libsecret` is a row in
+  `packages/core.tsv`. The other half of the contract, `org.freedesktop.secrets`, comes from
+  `kwallet`, which Plasma already installs. On Plasma 6 the daemon answering that name is
+  `ksecretd`. If either half is missing the script **refuses** rather than quietly falling back;
+  `--plaintext` is there if you explicitly want `~/.git-credentials` instead, and it says so
+  loudly.
+- **It writes `~/.config/git/credentials.inc`, not `~/.gitconfig`.** `git config --global`
+  writes `~/.gitconfig`, which chezmoi regenerates from `home/dot_gitconfig.tmpl` — so a helper
+  configured the obvious way works until the next `chezmoi apply` and then silently disappears.
+  The template `[include]`s the machine-local file instead, and git ignores an include whose
+  path does not exist.
+- **The private forge's hostname is not in this repo.** It comes from chezmoi's `workGitHost`,
+  answered once at `chezmoi init` and stored in machine-local `~/.config/chezmoi/chezmoi.toml`.
+  A hostname is not a credential, but it is inventory, and this repo is public.
+
+> **Forgetting is local.** `--forget` drops the copy in your keyring. It does not revoke
+> anything — do that on the host, where the token was issued.
+
 ---
 
 ## ⚙️ Phase 7: Plasma personalization
