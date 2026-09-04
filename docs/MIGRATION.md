@@ -155,6 +155,10 @@ directory you can list.
 
 ## Stage 3 — Back up to the external drive
 
+> The two scripts below are documented in full in **`docs/BACKUP.md`** — what each one finds,
+> every flag, the output layout, how to prove a dump really restores, and what to do when one
+> of them says something unexpected. This stage is the ordering and the gates only.
+
 **Sizing, measured:**
 
 | | |
@@ -229,38 +233,18 @@ directory you can list.
   > syncs. `Default/Local Extension Settings` (54 MB — uBlock custom filters and friends) is
   > worth a small targeted tar; the other 1.4 GB is not.
 - **Every agent's MCP servers, skills, rules and settings.** `./scripts/agents-backup.sh export`.
-  Nine MCP servers at user scope, four carrying live API keys or bearer tokens (stitch, both
-  visual-editor instances, context7); plus `~/.claude/skills`, `rules/`, `settings.json` and the
-  installed-plugin *list*. Restore fans out to **Claude Code, Codex and Antigravity 2.0** —
-  `~/.claude.json`, `~/.codex/config.toml` (`[mcp_servers.*]`, TOML, in a rewritable managed
-  block) and `~/.gemini/config/mcp_config.json`.
-  > **NB — skills go into `~/.agents/skills` once and are symlinked into all three.** That is
-  > already the pattern this machine uses for 13 of them, and it is the only arrangement where
-  > editing a skill updates every agent instead of leaving three copies to drift.
-  > **NB — this is a repair, not just a restore.** Measured 2026-09-04: **all 27** symlinks in
-  > `~/.gemini/config/skills` are dead. Whatever populated it copied Claude Code's link text
-  > verbatim without adjusting for the extra directory level, so `../../.agents/skills/X`
-  > resolves to `~/.gemini/.agents/...`. Antigravity can currently see only the three skills
-  > that happen to be real directories. The script writes the correct depth and replaces
-  > dangling links without needing `--force`.
-  > **NB — dead servers are skipped by default.** `spartan-ui` and `pencil` point at binaries
-  > that do not exist, and a dead stdio server is a startup error in every agent that loads it.
-  > `--all` keeps them.
-  > **NB — `~/.claude/skills` is three different things wearing one directory,** and a plain
-  > `tar` gets it wrong. Measured 2026-09-04: 3 real directories, 13 **relative** symlinks into
-  > `~/.agents/skills`, and **14 absolute symlinks to `/c/Users/SharifdotG/...`** left over from
-  > the Windows machine. `/c` does not exist here, so those fourteen are *already dead* — a tar
-  > would faithfully archive fourteen dangling links and restore them, still dead. The script
-  > drops them by name, keeps the working links **as links**, and archives `~/.agents/skills`
-  > alongside so they still resolve after restore. Verified into a sandbox `$HOME`: 19 skills,
-  > zero dangling.
-  > **NB — export, do not copy `~/.claude.json`.** That file is 79 KB of which the MCP config
-  > is a few hundred bytes; the rest is this machine's identity — `machineID`, `userID`,
-  > onboarding flags, per-project history, cached feature flags. The script extracts only
-  > `mcpServers`, at both scopes, and merges it back without touching anything else.
-  > It also names the servers that would arrive dead: `spartan-ui` and `pencil` already point
-  > at binaries that do not exist here, and the three project-scoped entries are stale
-  > `C:/Users/...` paths from an even older machine. Prune them while you are moving.
+  Nine MCP servers at user scope, four carrying live API keys or bearer tokens; plus
+  `~/.claude/skills`, `rules/`, `settings.json` and the installed-plugin *list*. Restore fans out
+  to **Claude Code, Codex and Antigravity 2.0**. Full detail in `docs/BACKUP.md`.
+  > **NB — two decisions to make while you are here, because nothing else will prompt you.**
+  > **(1)** `spartan-ui` and `pencil` are dead servers — their binaries do not exist. **(2)** 14
+  > of your 30 skills are dead links to `/c/Users/SharifdotG/…` from the Windows machine. The
+  > script names both sets and drops the dead skills rather than archiving dangling links, but
+  > it will not prune them from `~/.claude/skills` for you. Do that now or carry them forever.
+  > **NB — it exports `mcpServers`; it does not copy `~/.claude.json`.** That file is 79 KB of
+  > which the MCP config is a few hundred bytes — the rest is this machine's identity
+  > (`machineID`, `userID`, onboarding flags, per-project history). Restoring it wholesale
+  > carries the old machine's identity onto the new one.
 - `~/Documents` (3.8 GB); `~/.config` and `~/.local` **backed up wholesale, restored
   selectively**; `~/.claude` — re-measured at **294 MB**, of which `projects/` alone is 248 MB
   of conversation transcripts and `plugins/` a re-installable 37 MB. The part that is genuinely
@@ -296,32 +280,19 @@ It splits the named volumes by rule, because the right answer differs:
 | a Postgres data volume | `pg_dump -Fc`, run **inside** the container so the dump client version matches the server |
 | every other volume | `tar`, with the containers that mount it **stopped** for the duration |
 
-> **NB — do not just tar the Postgres volumes, for two independent reasons.** A tar of a live
-> `PGDATA` is a torn snapshot: it restores cleanly, passes a smoke test, and corrupts at the
-> first checkpoint. And a `PGDATA` directory is bound to its major version — this machine runs
-> **15, 16 and 17 side by side**, so a `postgres:15` volume cannot be opened by a 17 server and
-> there is no in-place path across a reinstall. Logical dumps have neither problem.
-
-> **NB — the script never runs `docker start` on your containers, and that is not fastidiousness.**
-> `structflow-postgres-1` and `tryton-postgres-1` both publish host port **5432**, so starting the
-> stopped one fails whenever the other is up — which is most of the time, and it failed silently
-> the first time this was written. A stopped database is read through a *throwaway* container on
-> the same image and the same volume, publishing nothing. It also works if the container has since
-> been deleted.
-
-> **NB — the throwaway is given no `POSTGRES_PASSWORD`, deliberately.** If the volume were empty,
-> the official entrypoint refuses to initialise without one and fails loudly — rather than quietly
-> creating a fresh empty cluster and handing you a dump that restores perfectly and contains
-> nothing.
+> **NB — do not just tar the Postgres volumes.** A tar of a live `PGDATA` is a torn snapshot: it
+> restores cleanly, passes a smoke test, and corrupts at the first checkpoint. And `PGDATA` is
+> bound to its major version — this machine runs **15, 16 and 17 side by side**. `docs/BACKUP.md`
+> has the rest, including why the script never runs `docker start` on your containers.
 
 Measured 2026-09-04: **~470 MB of database volumes → an 8.3 MB snapshot**, in 12 seconds, with
 all three dumps verified by restoring them into clean throwaway servers (structflow 73 tables,
-keycloak 87, tryton 540).
+keycloak 87, tryton 540). **There are three databases, not two** — `keycloak-postgres` holds
+every realm, client and user for the SocialHousing stack, and the run must report **3/3**.
 
 > **The snapshot also copies each compose project's `.env`,** which is Stage 2's fourth check
 > arriving by a different route — and per byte it is worth more than the dumps. A restored
-> database is useless if the password the app connects with no longer matches. Pass `--no-env`
-> if you would rather keep the snapshot free of secrets and re-enter them by hand.
+> database is useless if the password the app connects with no longer matches.
 
 **Two copies of the small irreplaceable set.** The gitignored secrets, the credential files
 and the kwallet export total a few hundred MB. Put them somewhere *other* than the external
@@ -451,9 +422,21 @@ The ordering *is* the content.
    glibc change, and it leaves you with clean trees. **Then** drop the gitignored
    `.env`-class files back in from the Stage 2 archive — that is the one thing a clone
    cannot give you.
-9. **Data, selectively**: `~/Documents`, chosen `~/.config` and `~/.local` subtrees, the
-   Brave profile, `~/.claude`. The exclusion list from Stage 3 is a *restore* policy, not
-   just a backup policy.
+9. **Data, selectively**: `~/Documents`, chosen `~/.config` and `~/.local` subtrees. The
+   exclusion list from Stage 3 is a *restore* policy, not just a backup policy. Brave needs
+   only the 24-word sync code.
+
+   **Agents — do this one now**, because it needs neither Docker nor a single cloned repo:
+
+   ```bash
+   ./scripts/agents-backup.sh restore -i ~/Backup/claude
+   ```
+
+   Backs up `~/.claude.json` first, then merges into Claude Code, Codex and Antigravity 2.0
+   and links every skill from the one store in `~/.agents/skills`. Anything already on the new
+   machine wins unless you pass `--force`; dangling skill links are replaced regardless.
+   Plugins are **not** restored — the cache is 37 MB and some entries still record a
+   `C:\Users\...` install path, so it prints the list for `/plugin install` instead.
 10. **Docker last.** Install, `systemctl enable --now docker.socket` (socket activation means
     dockerd is not resident until something talks to it — worth ~0.3 GB on a 16 GB box),
     apply `daemon.json`, re-pull from the image list, and `docker load` **only** the local-only
@@ -474,10 +457,12 @@ The ordering *is* the content.
     > success nor failure, and the script says which of the three happened rather than printing
     > a tick over a partial load. Read those errors before trusting the database.
 
-    Also `./scripts/agents-backup.sh restore -i ~/Backup/claude` — it backs up `~/.claude.json`
-    first, and anything already present on the new machine wins over the export unless you pass
-    `--force`. Plugins are **not** restored: the cache is 37 MB and some entries still record a
-    `C:\Users\...` install path, so the script prints the list for `/plugin install` instead.
+    > **NB — step 8's clones must already exist.** The restore puts each project's `.env` back
+    > into its project directory and runs `docker compose up -d <db service>` there. With no
+    > clone there is nowhere to put the `.env` and nothing to bring up; the script says
+    > *"project directory not found — clone it first"* and skips that project.
+
+    Flags, output layout and a troubleshooting table: `docs/BACKUP.md`.
 11. **Check where the browser actually lives in the cgroup tree.**
     ```bash
     for p in $(pgrep -f /opt/brave.com/brave-origin); do cut -d: -f3 /proc/$p/cgroup; done | sort | uniq -c

@@ -37,6 +37,7 @@ on anything that is not Arch-derived; see `docs/MIGRATION.md` for how the machin
 | `scripts/` | `reclaim.sh`, `secrets-setup.sh`, `git-credentials.sh`, `doctor.sh`, and the backup pair `db-backup.sh` / `db-restore.sh` plus `agents-backup.sh`. |
 | `docs/SETUP-GUIDE.md` | The long-form guide. This repo is its executable half. |
 | `docs/MIGRATION.md` | The one-time move off Fedora KDE. A runbook, not a reference. |
+| `docs/BACKUP.md` | Backup and restore: the databases, the `.env` files, and every agent's MCP + skills. |
 
 ## After bootstrap
 
@@ -52,48 +53,37 @@ sudo usermod -aG kvm "$USER"    # only for Claude Desktop's Cowork tab (QEMU/KVM
 
 ## Moving to a new machine
 
-Two things on this laptop are neither in git nor regenerable: the Dockerised databases, and
-Claude Code's MCP server definitions with their API tokens. One script each, run **before**
-the wipe:
+A `git clone` restores your code and `bootstrap.sh` restores your configuration. Between them
+they miss three things, all of which live only on the disk you are about to erase: the
+**Dockerised databases**, the projects' **gitignored `.env` files**, and your **agent config** —
+MCP tokens and skills for Claude Code, Codex and Antigravity 2.0.
+
+Two commands before the wipe:
 
 ```bash
-./scripts/db-backup.sh            # every Postgres -> pg_dump -Fc; other volumes -> tar
-./scripts/agents-backup.sh export # MCP servers, global skills, rules, settings
+./scripts/db-backup.sh            # databases, volumes, and every project .env
+./scripts/agents-backup.sh export # MCP servers, skills, rules, settings
 ```
 
-and after it, on the new machine, once the repos are cloned:
+and two after it, once the repos are cloned:
 
 ```bash
-./scripts/db-restore.sh ~/Backup/db/<stamp> --list   # read-only: what is in there
-./scripts/db-restore.sh ~/Backup/db/<stamp>
 ./scripts/agents-backup.sh restore -i ~/Backup/claude
+./scripts/db-restore.sh ~/Backup/db/<stamp> --list   # read-only. Always first
+./scripts/db-restore.sh ~/Backup/db/<stamp>
 ```
 
-`agents-backup.sh` exports **once** and restores into **all three agents on this machine** —
-Claude Code, Codex and Antigravity 2.0 — translating the same servers into the shape each one
-actually reads:
+Measured here: **10 MB total, twelve seconds** — it is small because it is logical (dumps and
+manifests, not disk images). ~470 MB of database volumes become an 8.3 MB snapshot, and all
+three dumps were verified by restoring them into clean throwaway servers.
 
-| Agent | MCP config | Format |
-|---|---|---|
-| Claude Code | `~/.claude.json` → `.mcpServers` | JSON |
-| Codex | `~/.codex/config.toml` → `[mcp_servers.<name>]` | TOML, in a managed block |
-| Antigravity 2.0 | `~/.gemini/config/mcp_config.json` → `.mcpServers` | JSON |
+**`docs/BACKUP.md` is the full guide** — what each script finds, the flags, the restore order
+and why it is that order, what is deliberately *not* backed up, and a troubleshooting table.
+`docs/MIGRATION.md` is the runbook that calls them.
 
-Skills are installed **once** into `~/.agents/skills` and symlinked into each agent's skills
-directory, so editing a skill updates it everywhere instead of leaving three copies to drift.
-Servers whose stdio command does not exist are skipped by default (`--all` to keep them) —
-a dead server is a startup error in every agent that loads it.
-
-Both outputs contain secrets — the projects' `.env` files, role password hashes, and live
-bearer tokens — and are written `0700`/`0600` outside this tree. Neither belongs on the
-external drive *only*; see `docs/MIGRATION.md` Stage 3.
-
-> **Why `pg_dump` and not a tar of the volume.** A tar of a live `PGDATA` is a torn snapshot
-> that restores cleanly and corrupts at the first checkpoint, and a `PGDATA` directory is
-> bound to its major version — this machine runs Postgres 15, 16 and 17 side by side. So the
-> split is by rule: Postgres gets logical dumps, everything else gets a tarball with its
-> containers stopped. Measured here: **~470 MB of database volumes → an 8.3 MB snapshot**,
-> and all three dumps verified by restoring them into clean throwaway servers.
+> Both outputs contain secrets — the `.env` files, Postgres role password hashes and live
+> bearer tokens — and are written `0700`/`0600` under `~/Backup/`, outside this tree on
+> purpose. Never move them into the repo; it is public.
 
 ## Two things not to "fix"
 
