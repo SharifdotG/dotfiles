@@ -1,0 +1,33 @@
+# Cross-platform checkout rules. Added 2026-09-04 alongside the fix for a repo
+# that could not be cloned on Windows at all (see
+# home/.chezmoiscripts/run_onchange_after_30-user-units.sh.tmpl for that one).
+#
+# WHY THIS MATTERS EVEN THOUGH EVERY TARGET IS LINUX. Git for Windows ships
+# core.autocrlf=true by default, which rewrites LF to CRLF on checkout. Nothing
+# here is ever RUN on Windows - but the files get committed back from there,
+# and a shell script that picks up CRLF fails on Linux in the least helpful way
+# possible:
+#     ./bootstrap.sh: line 2: $'\r': command not found
+# A `#!/usr/bin/env bash\r` shebang fails with "no such file or directory"
+# naming a binary that plainly exists. Config files are just as bad and quieter:
+# systemd, sysctl and fontconfig will happily parse a trailing \r into a value.
+#
+# So: normalise everything to LF in the index and check it out as LF everywhere.
+* text=auto eol=lf
+
+# Binary assets - never touched, never diffed as text. Without these, `git
+# diff` on the 3840x2160 wallpaper tries to print 4 MB of PNG.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+
+# Linguist: this is a dotfiles repo, so report it as Shell rather than letting
+# the vendored zsh syntax-highlighting theme and the JSON configs decide.
+*.tsv       linguist-language=TSV
+docs/*.md   linguist-documentation

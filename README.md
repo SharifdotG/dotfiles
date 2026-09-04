@@ -23,13 +23,42 @@ git clone <this-repo> ~/dotfiles && ~/dotfiles/bootstrap.sh
 `bootstrap.sh` is idempotent — re-running it is the normal update path. It refuses to run
 on anything that is not Arch-derived; see `docs/MIGRATION.md` for how the machine got here.
 
+**The repo clones anywhere, including Windows and macOS** — it just will not *bootstrap*
+anywhere but Arch. That distinction had to be fixed on 2026-09-04, because it was not true:
+
+```console
+$ git clone <this-repo>
+error: invalid path 'home/private_dot_config/systemd/user/app-brave\x2dorigin@.service.d/50-memory.conf'
+fatal: unable to checkout working tree
+```
+
+One file needed a literal `\` in its filename — systemd escapes the `-` in the unit name
+`app-brave-origin@.service`, and a drop-in directory without that escape matches nothing. `\`
+is an illegal filename character on Windows, and git refuses the **entire checkout** rather
+than skipping the one path, so the clone left a `.git` directory and no files at all. A
+Linux-only detail in one file made the whole repo unreadable on every other OS.
+
+The escaped path is load-bearing and still used; it is just no longer *committed* as a path.
+The content lives at `home/.chezmoitemplates/systemd-user/` under a portable name, and
+`home/.chezmoiscripts/run_onchange_after_30-user-units.sh.tmpl` writes it to the escaped
+path at apply time — moving the backslash out of a filename git must check out and into a
+string inside a shell script, which git checks out anywhere. One consequence worth knowing:
+`chezmoi diff` and `chezmoi status` no longer show drift in that one target file. The script
+owns it, and re-runs whenever its content changes.
+
+`.gitattributes` covers the other half of the same problem: Git for Windows defaults to
+`core.autocrlf=true`, and a shell script that picks up CRLF fails on Linux as
+`$'\r': command not found` — or, for a shebang, as "no such file or directory" naming a
+binary that plainly exists. Everything is normalised to LF.
+
 ## What's here
 
 | Path | Purpose |
 |---|---|
 | `bootstrap.sh` | The only entrypoint. Verifies the distro, installs packages, applies `home/`. |
 | `home/` | chezmoi source tree → `~`. Shell, terminal, editor and CLI config. |
-| `home/.chezmoiscripts/` | Run after the files land: the Plasma theme keys, and the `systemctl --user` reload. |
+| `home/.chezmoiscripts/` | Run after the files land: the Plasma theme keys, and the `systemctl --user` write + reload. |
+| `home/.chezmoitemplates/` | Content chezmoi cannot apply as a *path* — currently one systemd drop-in whose real filename contains a `\`, which Windows cannot check out. See above. |
 | `lib/` | `log.sh`, `detect.sh`, `pkg.sh` — sourced by everything else. Plain awk + TSV, no dependencies. |
 | `packages/*.tsv` | Logical package id → real name per source (`arch`, `aur`). Plain TSV, parsed with awk. |
 | `os/cachyos/prep.sh` | Repo tier, pacman settings and the AUR helper — everything that must be right *before* packages install. |

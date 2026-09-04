@@ -1,28 +1,88 @@
 #!/usr/bin/env bash
-# Make the systemd USER manager pick up the unit files chezmoi just wrote.
+# Write the one systemd user unit chezmoi cannot write itself, then make the
+# systemd USER manager pick up everything in ~/.config/systemd/user.
 #
-# WHY THIS EXISTS. home/private_dot_config/systemd/user/ ships browser.slice and
-# two drop-ins, and their own comments say "`systemctl --user daemon-reload`
-# applies both without a restart". Nothing in the repo ever ran it: bootstrap.sh
-# ends at `chezmoi apply`, and system/apply.sh's daemon-reload runs as root and
-# reloads the SYSTEM manager, which is a different manager entirely. So on a
-# fresh bootstrap the files landed on disk and sat inert until the next login -
-# which is a long time to run a 16 GB laptop with no browser ceiling.
+# WHY THE RELOAD EXISTS. home/private_dot_config/systemd/user/ ships
+# browser.slice and a drop-in, and their own comments say "`systemctl --user
+# daemon-reload` applies both without a restart". Nothing in the repo ever ran
+# it: bootstrap.sh ends at `chezmoi apply`, and system/apply.sh's daemon-reload
+# runs as root and reloads the SYSTEM manager, which is a different manager
+# entirely. So on a fresh bootstrap the files landed on disk and sat inert until
+# the next login - which is a long time to run a 16 GB laptop with no browser
+# ceiling.
 #
-# run_onchange_ keyed on the unit files themselves, not on this script: the
-# hashes below change whenever a unit changes, which is exactly when a reload is
-# needed. Editing a MemoryHigh therefore re-runs this by itself.
+# WHY THIS SCRIPT ALSO WRITES A FILE - added 2026-09-04, and it is a
+# portability fix, not a design preference.
+#
+# The Brave service drop-in has to land at
+#     ~/.config/systemd/user/app-brave\x2dorigin@.service.d/50-memory.conf
+# because systemd escapes the `-` in the instance name `brave-origin`, so the
+# unit really is called app-brave\x2dorigin@<hex>.service and a directory named
+# app-brave-origin@.service.d matches nothing. That backslash is fine on Linux
+# and is an ILLEGAL FILENAME CHARACTER on Windows (and it trips macOS tooling
+# too), so with the file committed at that path `git clone` refused to check
+# out the working tree at all:
+#     error: invalid path 'home/private_dot_config/systemd/user/
+#            app-brave\x2dorigin@.service.d/50-memory.conf'
+#     fatal: unable to checkout working tree
+# One Linux-only path made the entire repo unclonable on every other OS - not
+# "that one file is missing", the whole checkout aborted.
+#
+# The fix keeps the escaped path (it is load-bearing; systemd will not find the
+# drop-in without it) and stops committing it AS A PATH. The content lives at
+# .chezmoitemplates/systemd-user/app-brave-origin-50-memory.conf under a
+# Windows-safe name and is inlined below, so the only place the backslash
+# appears in this repo is inside a shell string, which git happily checks out
+# anywhere.
+#
+# The scope drop-in and browser.slice have no such problem
+# (app-org.chromium.Chromium-.scope.d and browser.slice are ordinary names), so
+# they stay normal chezmoi-managed files.
+#
+# run_onchange_ keyed on the unit CONTENT, not on some hand-bumped version: the
+# hashes below change whenever a managed unit changes, and the Brave drop-in is
+# embedded verbatim in this script's rendered text, so editing any of the three
+# re-runs this by itself. That is exactly when a write + reload is needed.
 #
 # units: {{ include "private_dot_config/systemd/user/browser.slice" | sha256sum }}
-#        {{ include `private_dot_config/systemd/user/app-brave\x2dorigin@.service.d/50-memory.conf` | sha256sum }}
 #        {{ include "private_dot_config/systemd/user/app-org.chromium.Chromium-.scope.d/50-memory.conf" | sha256sum }}
 #
-# _after_: the unit files have to be on disk before the manager is told to look.
+# _after_: the chezmoi-managed unit files have to be on disk before the manager
+# is told to look.
 
 set -uo pipefail
 
+UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+
+# ── the drop-in chezmoi cannot name ──────────────────────────────────────────
+# NB: SINGLE quotes around the path. In double quotes bash leaves `\x` alone
+# today, but it is one `echo -e`, `printf` or shell option away from being
+# interpreted, and a path that silently loses its backslash produces a drop-in
+# directory that systemd never reads and no error anywhere. Single quotes make
+# it literal by construction.
+BRAVE_DROPIN=$UNIT_DIR'/app-brave\x2dorigin@.service.d/50-memory.conf'
+
+mkdir -p "${BRAVE_DROPIN%/*}" || {
+  echo "  user-units: could not create ${BRAVE_DROPIN%/*}"
+  exit 0
+}
+
+# NB: quoted heredoc delimiter ('EOF'). The file below is full of `$` in prose
+# and, more to the point, contains `\x2d` and `<PID>` in its comments - an
+# unquoted heredoc would expand and mangle them.
+cat > "$BRAVE_DROPIN" <<'CHEZMOI_BRAVE_DROPIN_EOF'
+{{ includeTemplate "systemd-user/app-brave-origin-50-memory.conf" . }}
+CHEZMOI_BRAVE_DROPIN_EOF
+echo "  user-units: wrote ${BRAVE_DROPIN#$HOME/}"
+
+# ── tell the manager ─────────────────────────────────────────────────────────
 # No user manager to talk to on a TTY bootstrap - the units are already on disk
 # and the manager reads them at the next login, so this is a clean no-op.
+#
+# NB: this guard is deliberately BELOW the write above. It used to be the first
+# thing in the file, which was correct when the script only reloaded; now that
+# it also produces a unit, exiting early here would skip the write and leave
+# Brave uncapped until the next apply that happened to run inside a session.
 if [ -z "${XDG_RUNTIME_DIR:-}" ] || [ ! -S "${XDG_RUNTIME_DIR:-}/bus" ]; then
   echo "  user-units: no systemd user session - units take effect at next login"
   exit 0
