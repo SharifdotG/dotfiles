@@ -147,21 +147,35 @@ assert_overrides() {
     echo "             (home/.chezmoiexternal.toml fetches it)"
     echo "             this re-applies by itself once it is on disk"
   fi
+
+  # ── splash screen ──────────────────────────────────────────────────────────
+  # The one visual piece catppuccin/kde ships that this repo was not using. Its
+  # package is assembled by four externals (see home/.chezmoiexternal.toml) and
+  # the assembly is load-bearing: the tarball's splash directory has no
+  # Splash.qml in it, and a splash package without one installs, lists, and
+  # renders nothing.
+  #
+  # NB: THIS BELONGS IN assert_overrides, and it was outside it until
+  # 2026-09-05. The splash is a SEPARATE look-and-feel package
+  # (Catppuccin-Latte-Blue-splash) from the global theme
+  # (Catppuccin-Latte-Blue), and `plasma-apply-lookandfeel` writes its own
+  # package name into ksplashrc/KSplash/Theme. Written once before that apply,
+  # this was overwritten by it every single time - so ksplashrc ended up naming
+  # the global theme, whose contents/splash/ is not what we want to boot into.
+  #
+  # It hid for as long as it did because run_onchange_ meant the script rarely
+  # re-ran; doctor.sh's "splash theme" check went red the moment it did. Exactly
+  # the same shape as the decoration and border keys above, and the reason this
+  # function is called twice.
+  if [ -f "${XDG_DATA_HOME:-$HOME/.local/share}/plasma/look-and-feel/$SPLASH/contents/splash/Splash.qml" ]; then
+    kwriteconfig6 --file ksplashrc --group KSplash --key Engine "KSplashQML"
+    kwriteconfig6 --file ksplashrc --group KSplash --key Theme  "$SPLASH"
+  else
+    echo "  kde-theme: splash '$SPLASH' incomplete or absent - leaving the current one"
+    echo "             (expected contents/splash/Splash.qml; see .chezmoiexternal.toml)"
+  fi
 }
 assert_overrides
-
-# ── splash screen ────────────────────────────────────────────────────────────
-# The one visual piece catppuccin/kde ships that this repo was not using. Its
-# package is assembled by four externals (see home/.chezmoiexternal.toml) and
-# the assembly is load-bearing: the tarball's splash directory has no Splash.qml
-# in it, and a splash package without one installs, lists, and renders nothing.
-if [ -f "${XDG_DATA_HOME:-$HOME/.local/share}/plasma/look-and-feel/$SPLASH/contents/splash/Splash.qml" ]; then
-  kwriteconfig6 --file ksplashrc --group KSplash --key Engine "KSplashQML"
-  kwriteconfig6 --file ksplashrc --group KSplash --key Theme  "$SPLASH"
-else
-  echo "  kde-theme: splash '$SPLASH' incomplete or absent - leaving the current one"
-  echo "             (expected contents/splash/Splash.qml; see .chezmoiexternal.toml)"
-fi
 
 # ── fonts ────────────────────────────────────────────────────────────────────
 # These six keys are every font Plasma's Fonts page exposes. Missing one leaves
