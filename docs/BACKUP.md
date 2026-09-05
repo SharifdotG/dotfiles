@@ -176,8 +176,10 @@ cd ~/dotfiles
                                     # and the private forge. Both remotes are
                                     # HTTPS; no SSH key is involved anywhere.
 
-# 5. clone your project repos into the SAME paths as before
-#    ~/Documents/Code/VSCode/structflow, .../SocialHousingOSS, ...
+# 5. clone your project repos under ~/Documents/Code
+#    ~/Documents/Code/structflow, ~/Documents/Code/SocialHousingOSS/..., ...
+#    The paths no longer have to match the old machine exactly - see
+#    "When the code tree moves" below.
 
 # 6. docker, then the databases
 sudo usermod -aG docker "$USER"     # then log out and back in - this is the half
@@ -189,7 +191,7 @@ sudo ./system/apply.sh              # writes daemon.json AND enables docker.sock
 ./scripts/db-restore.sh ~/Backup/db/<stamp>
 
 # 7. the rest of each stack
-cd ~/Documents/Code/VSCode/structflow && docker compose up -d
+cd ~/Documents/Code/structflow && docker compose up -d
 ```
 
 > **Why step 5 comes before step 6.** The database restore puts each project's `.env` back into
@@ -205,6 +207,64 @@ cd ~/Documents/Code/VSCode/structflow && docker compose up -d
 > **Why the browser comes last, or at least after Phase 4.** The first thing that stresses a
 > fresh machine is the restore itself. Do not do it on an untuned 16 GB box; see
 > `docs/MIGRATION.md` Stage 5.
+
+### When the code tree moves
+
+A snapshot records each project's directory as the **absolute path it had at backup time**,
+taken from docker's `com.docker.compose.project.working_dir` label. That is historical fact and
+the snapshot is never rewritten — but it goes stale the moment the code tree moves, and then
+every path in every existing snapshot is wrong at once.
+
+This happened on **2026-09-06**, moving `~/Documents/Code/VSCode` → `~/Documents/Code` — one
+segment shallower. A restore of a snapshot taken two days earlier skipped *everything*:
+
+```
+▸ [2/5] Project .env files
+  ▲ structflow: project directory not found - clone it first, then re-run
+  ✓ 0 placed, 3 skipped
+▸ [4/5] Databases
+  ▲ structflow: no container 'structflow-postgres-1' and no project directory at
+    '/home/sharifdotg/Documents/Code/VSCode/structflow'
+
+  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  0/2 databases restored
+```
+
+Nothing was wrong with the snapshot. Every project was on disk, one directory over.
+
+`db-restore.sh` now treats the recorded path as a **starting point, not an answer**, and says so
+when it relocates one:
+
+```
+    structflow moved    /home/…/Code/VSCode/structflow -> /home/…/Code/structflow
+```
+
+Three strategies, most trustworthy first:
+
+1. **The recorded path still exists** — use it verbatim, no search.
+2. **`--remap OLD=NEW`** (repeatable) — an explicit prefix rewrite. This outranks the search
+   below on purpose: an operator saying where something went is better evidence than anything
+   the script can infer.
+3. **Search under `--code-root`** (default `~/Documents/Code`, or `$CODE_ROOT`) for the
+   **longest trailing part** of the recorded path that exists there:
+
+   ```
+   recorded  /home/me/Documents/Code/VSCode/SocialHousingOSS/tryton
+   tries     $CODE_ROOT/home/me/Documents/Code/VSCode/SocialHousingOSS/tryton
+             …
+             $CODE_ROOT/SocialHousingOSS/tryton     <- hit, and specific
+             $CODE_ROOT/tryton                      <- never reached
+   ```
+
+   Longest-first is what keeps this honest. Taking the shortest match would happily bind a
+   project called `tryton` sitting anywhere in the tree. A candidate that also holds a compose
+   file wins outright; a bare directory is only a fallback.
+
+> **The search only ever shortens the recorded path — it never hunts recursively.** So a project
+> that moved *deeper* (gained a new parent directory) will not be found automatically, by design:
+> that is where a wrong guess would be plausible and expensive. Use `--remap` for it.
+
+Nothing needs doing for **future** snapshots: `db-backup.sh` reads the working directory from the
+live docker label every run, so it records wherever the project is now.
 
 ### What `db-restore.sh` actually does
 

@@ -21,6 +21,24 @@ cd "$(dirname "$0")/.."
 
 SNAP=""; ONLY=""; ASSUME_YES=0; DO_GLOBALS=0; LIST_ONLY=0
 
+# ── where projects live NOW ──────────────────────────────────────────────────
+# A snapshot records each project's directory as the ABSOLUTE path it had at
+# backup time, read from docker's com.docker.compose.project.working_dir label.
+# That is historical fact and must not be rewritten - the snapshot is evidence.
+# But it goes stale the moment a project tree moves, and then every path in
+# every existing snapshot is wrong at once.
+#
+# Observed 2026-09-06: the code tree moved from ~/Documents/Code/VSCode to
+# ~/Documents/Code, one path segment shallower, and a restore of a snapshot
+# taken two days earlier skipped EVERYTHING - 0 of 2 databases, 0 of 3 .env
+# files - reporting only "project directory not found". Nothing was wrong with
+# the snapshot; every project was on disk, one directory over.
+#
+# So the recorded path is a starting point, not an answer. resolve_wd() below
+# takes the recorded path and finds where that project actually is now.
+CODE_ROOT="${CODE_ROOT:-$HOME/Documents/Code}"
+REMAPS=()
+
 usage() {
   cat <<'EOS'
 usage: scripts/db-restore.sh <snapshot-dir> [--only PROJECT] [--globals] [--yes]
@@ -35,6 +53,14 @@ usage: scripts/db-restore.sh <snapshot-dir> [--only PROJECT] [--globals] [--yes]
                    not create.
   --yes            do not prompt before each destructive restore
   --list           print what the snapshot contains and exit, touching nothing
+  --code-root DIR  where project trees live now (default ~/Documents/Code, or
+                   $CODE_ROOT). A snapshot stores the absolute path each
+                   project had when it was taken; if the tree has moved since,
+                   this is the root the relocation search starts from.
+  --remap OLD=NEW  rewrite a recorded path prefix explicitly. Repeatable. Only
+                   needed when the automatic search guesses wrong or when a
+                   project moved somewhere outside --code-root, e.g.
+                     --remap "$HOME/Documents/Code/VSCode=$HOME/Documents/Code"
 EOS
   exit "${1:-0}"
 }
@@ -45,6 +71,11 @@ while [ $# -gt 0 ]; do
     --yes|-y)  ASSUME_YES=1; shift ;;
     --globals) DO_GLOBALS=1; shift ;;
     --list)    LIST_ONLY=1; shift ;;
+    --code-root) CODE_ROOT="${2:-}"; [ -n "$CODE_ROOT" ] || die "--code-root needs a directory"
+               [ -d "$CODE_ROOT" ] || die "--code-root: no such directory: $CODE_ROOT"; shift 2 ;;
+    --remap)   [ -n "${2:-}" ] || die "--remap needs OLD=NEW"
+               case "$2" in *=*) ;; *) die "--remap wants OLD=NEW, got: $2" ;; esac
+               REMAPS+=("$2"); shift 2 ;;
     -h|--help) usage 0 ;;
     -*)        warn "unknown argument: $1"; usage 1 ;;
     *)         [ -z "$SNAP" ] || { warn "more than one snapshot directory given"; usage 1; }
@@ -54,6 +85,76 @@ done
 
 [ -n "$SNAP" ] || usage 1
 [ -d "$SNAP" ] || die "no such directory: $SNAP"
+
+# ── finding a project that has moved since the snapshot ──────────────────────
+# A compose file is the tell that a directory really is the project root, and
+# not merely a directory with the right name. All four spellings are in use
+# across these repos - structflow has docker-compose.yml, tryton has
+# compose.yml, integration-layer-api has docker-compose.yaml - so check all of
+# them rather than assuming one.
+_compose_in() { # _compose_in <dir>
+  [ -f "$1/docker-compose.yml"  ] || [ -f "$1/docker-compose.yaml" ] ||
+  [ -f "$1/compose.yml"         ] || [ -f "$1/compose.yaml"        ]
+}
+
+# resolve_wd <recorded path> -> prints a usable directory, or nothing (exit 1).
+# Three strategies, most trustworthy first.
+resolve_wd() {
+  local wd="$1" rel cand best="" m old new
+  [ -n "$wd" ] && [ "$wd" != "-" ] || return 1
+
+  # 1. The recorded path still exists. Nothing has moved; use it verbatim.
+  [ -d "$wd" ] && { printf '%s' "$wd"; return 0; }
+
+  # 2. An explicit --remap the caller supplied, tried in the order given. This
+  #    outranks the search below on purpose: an operator saying where something
+  #    went is better evidence than anything this script can infer.
+  for m in ${REMAPS[@]+"${REMAPS[@]}"}; do
+    old="${m%%=*}"; new="${m#*=}"
+    case "$wd" in
+      "$old"*) cand="$new${wd#"$old"}"
+               [ -d "$cand" ] && { printf '%s' "$cand"; return 0; } ;;
+    esac
+  done
+
+  # 3. Search under CODE_ROOT for the LONGEST trailing part of the recorded
+  #    path that exists there. Longest first is what keeps this honest:
+  #
+  #      recorded  /home/me/Documents/Code/VSCode/SocialHousingOSS/tryton
+  #      tries     $CODE_ROOT/home/me/Documents/Code/VSCode/SocialHousingOSS/tryton
+  #                $CODE_ROOT/me/Documents/...
+  #                ...
+  #                $CODE_ROOT/SocialHousingOSS/tryton     <- hit, and specific
+  #                $CODE_ROOT/tryton                      <- never reached
+  #
+  #    Taking the shortest match instead would happily bind a project called
+  #    `tryton` sitting anywhere in the tree. A directory that also holds a
+  #    compose file wins outright; a bare directory is remembered as a fallback
+  #    but the search continues, because "named right AND has a compose file"
+  #    beats "named right" at any depth.
+  rel="${wd#/}"
+  while [ -n "$rel" ]; do
+    cand="$CODE_ROOT/$rel"
+    if [ -d "$cand" ]; then
+      _compose_in "$cand" && { printf '%s' "$cand"; return 0; }
+      [ -n "$best" ] || best="$cand"
+    fi
+    case "$rel" in */*) rel="${rel#*/}" ;; *) rel="" ;; esac
+  done
+
+  [ -n "$best" ] && { printf '%s' "$best"; return 0; }
+  return 1
+}
+
+# Say it once, loudly, rather than per row - a relocation is a thing the
+# operator must be able to see and disagree with, not a silent correction.
+_RELOC_SAID=""
+say_reloc() { # say_reloc <project> <recorded> <resolved>
+  [ "$2" = "$3" ] && return 0
+  case "$_RELOC_SAID" in *"|$1|"*) return 0 ;; esac
+  _RELOC_SAID="$_RELOC_SAID|$1|"
+  note "$1 moved" "$2 -> $3"
+}
 MAN_DB="$SNAP/databases.tsv"; MAN_VOL="$SNAP/volumes.tsv"
 [ -r "$MAN_DB" ] || die "$SNAP does not look like a db-backup.sh snapshot (no databases.tsv)"
 
@@ -144,10 +245,16 @@ else
     wd=$(awk -F'\t' -v p="$proj" '!/^#/ && $1 == p && $10 != "-" { print $10; exit }' "$MAN_DB")
     [ -n "$wd" ] || wd=$(awk -F'\t' -v p="$proj" '$1 == p { print $2; exit }' <(
       sed -n '/compose projects/,/^$/p' "$SNAP/manifest.txt" 2>/dev/null | sed 's/^  //'))
-    if [ -z "$wd" ] || [ ! -d "$wd" ]; then
+    # The recorded path is where this project lived when the snapshot was taken.
+    # resolve_wd finds where it is now; only a genuinely absent project falls
+    # through to the warning.
+    rec="$wd"; wd=$(resolve_wd "$rec") || wd=""
+    if [ -z "$wd" ]; then
       warn "$proj: project directory not found - clone it first, then re-run"
+      note "  looked for" "${rec:-<nothing recorded>}, then under $CODE_ROOT"
       SKIPPED=$((SKIPPED+1)); continue
     fi
+    say_reloc "$proj" "$rec" "$wd"
     dst="$wd/$sub"
     if [ -e "$dst" ]; then
       note "$proj/$sub" "already present, left alone"; SKIPPED=$((SKIPPED+1)); continue
@@ -205,16 +312,22 @@ while IFS=$'\t' read -r proj svc cont image db user file _bytes _sum wd; do
   # Get a server running. Prefer the container that already exists; otherwise
   # ask compose for exactly one service, not the whole stack - the app must not
   # come up and start writing before its data is in.
+  # Same relocation as the .env step: $wd is the path the snapshot recorded,
+  # which is stale as soon as the code tree moves.
+  rec="$wd"; wd=$(resolve_wd "$rec") || wd=""
+  [ -n "$wd" ] && say_reloc "$proj" "$rec" "$wd"
+
   if cexists "$cont"; then
     crunning "$cont" || docker start "$cont" >/dev/null 2>&1
-  elif [ "$wd" != "-" ] && [ -d "$wd" ]; then
+  elif [ -n "$wd" ]; then
     ( cd "$wd" && docker compose up -d "$svc" ) >/dev/null 2>&1 ||
       { warn "$proj: 'docker compose up -d $svc' failed in $wd"; continue; }
     cont=$(docker ps -q --filter "label=com.docker.compose.project=$proj" \
                        --filter "label=com.docker.compose.service=$svc" | head -1)
     [ -n "$cont" ] || { warn "$proj: compose started nothing named $svc"; continue; }
   else
-    warn "$proj: no container '$cont' and no project directory at '$wd'"
+    warn "$proj: no container '$cont' and no project directory"
+    note "  looked for" "${rec:-<nothing recorded>}, then under $CODE_ROOT"
     warn "  clone the repo, or bring the stack up yourself, then re-run with --only $proj"
     continue
   fi
