@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# Pin the web browser as the handler for http/https, and revoke the claims that
+# other apps make on those schemes.
+#
+# THE BUG THIS EXISTS FOR. chatgpt-desktop's .desktop file declares:
+#
+#   MimeType=x-scheme-handler/codex;x-scheme-handler/http;x-scheme-handler/https;...
+#
+# It needs `codex://` for the Codex CLI login callback. It also takes plain http
+# and https, which makes it a general-purpose browser as far as the desktop is
+# concerned. With no explicit default set for those two schemes, mimeinfo.cache
+# ends up listing two candidates:
+#
+#   x-scheme-handler/https=brave-origin.desktop;chatgpt.desktop;
+#
+# and NEITHER .desktop file declares InitialPreference, so the tie is unbroken.
+# Which app opens is then undefined and depends on who is asking - `gio` resolved
+# it to Brave while xdg-open on Plasma goes through KIO, which resolved it the
+# other way. Observed symptom: `claude` and VS Code Insiders' GitHub sign-in both
+# opened the ChatGPT app instead of a browser, intermittently.
+#
+# So this is not "set my preferred browser". It is breaking a tie that must not
+# exist, and it has to live in the repo because chatgpt-desktop is a
+# packages/desktop.tsv row - a rebuilt machine reinstalls it and the ambiguity
+# comes straight back.
+#
+# WHY A SCRIPT AND NOT A MANAGED mimeapps.list - the same reasoning as
+# 20-kde-theme and the GTK block in home/.chezmoiignore. Plasma's System
+# Settings "Default Applications" page rewrites ~/.config/mimeapps.list, and so
+# does every browser that offers to make itself the default. A chezmoi-managed
+# copy would clobber whatever was set through the GUI and be clobbered right
+# back. `xdg-mime default` MERGES one key instead, leaving every other
+# association alone - including the codex/claude-cli/discord/antigravity rows
+# that are deliberately pointed at their own apps.
+#
+# _after_: nothing here depends on a managed file landing first, but the ordering
+# is free and keeps all the "wire the live desktop up" scripts in one phase.
+#
+# NB: THE GUARDS' INPUTS ARE IN THE STATE LINE BELOW, and that is load-bearing
+# for exactly the reason 20-kde-theme documents at length: chezmoi records a
+# run_onchange_ script's hash on ANY zero exit, so a guard that fires on the
+# first apply would otherwise pin this script off forever. A TTY bootstrap runs
+# chezmoi before the browser is necessarily installed, which is precisely when
+# the browser guard fires. Putting the guard inputs in the rendered text means
+# installing Brave later changes the hash, so this re-runs by itself.
+#
+# state: browser={{ if stat "/usr/share/applications/brave-origin.desktop" }}y{{ else }}n{{ end }}
+#        chatgpt={{ if stat "/usr/share/applications/chatgpt.desktop" }}y{{ else }}n{{ end }}
+#        xdgmime={{ if lookPath "xdg-mime" }}y{{ else }}n{{ end }}
+
+set -uo pipefail
+
+BROWSER_DESKTOP="brave-origin.desktop"
+# Schemes the browser must own. text/html is here too: a .html file double
+# clicked in Dolphin goes through the same resolution and the same tie.
+WEB_TYPES=(x-scheme-handler/http x-scheme-handler/https text/html)
+# Apps that claim the types above but are not browsers. Listed by desktop file,
+# because that is what mimeapps.list keys on.
+INTERLOPERS=(chatgpt.desktop)
+
+MIMEAPPS="${XDG_CONFIG_HOME:-$HOME/.config}/mimeapps.list"
+
+# ── the browser has to exist before it can be made the default ───────────────
+# Setting a default that points at a missing .desktop is worse than setting
+# nothing: xdg-open falls through to an arbitrary handler with no error, which
+# is the failure this script exists to remove.
+if ! [ -f "/usr/share/applications/$BROWSER_DESKTOP" ] &&
+   ! [ -f "${XDG_DATA_HOME:-$HOME/.local/share}/applications/$BROWSER_DESKTOP" ]; then
+  echo "  default-apps: $BROWSER_DESKTOP not installed yet - skipping"
+  exit 0
+fi
+
+if ! command -v xdg-mime >/dev/null 2>&1; then
+  echo "  default-apps: no xdg-mime - skipping"
+  exit 0
+fi
+
+# ── 1. break the tie ─────────────────────────────────────────────────────────
+# NB: DO NOT guard this with `xdg-mime query default`. That was the first
+# version and it was silently wrong in the one case that matters. `query
+# default` returns the RESOLVED handler, which on an unconfigured machine comes
+# out of mimeinfo.cache - so on the exact machine this script is meant to fix it
+# answered "brave-origin.desktop" while [Default Applications] held no entry at
+# all, the guard read that as "already correct", and the explicit default was
+# never written. Caught by reverting mimeapps.list and re-running: the section
+# came back empty.
+#
+# The honest question is "is there an EXPLICIT entry", which means reading the
+# file, not asking the resolver. `xdg-mime default` is itself idempotent, so the
+# cost of getting this wrong in the other direction is one redundant write.
+_explicit() { # _explicit <mimetype> -> the desktop file, or empty
+  awk -F= -v k="$1" '
+    /^\[/ { in_s = ($0 == "[Default Applications]"); next }
+    in_s && $1 == k { print $2; exit }
+  ' "$MIMEAPPS" 2>/dev/null
+}
+
+_changed=0
+for t in "${WEB_TYPES[@]}"; do
+  [ "$(_explicit "$t")" = "$BROWSER_DESKTOP" ] && continue
+  xdg-mime default "$BROWSER_DESKTOP" "$t" 2>/dev/null && _changed=1
+done
+
+# xdg-mime is a shell script with per-desktop branches, and the KDE branch has
+# historically not written this file. Verify rather than trust - a default that
+# did not land is the original bug wearing a hat.
+for t in "${WEB_TYPES[@]}"; do
+  [ "$(_explicit "$t")" = "$BROWSER_DESKTOP" ] && continue
+  echo "  default-apps: WARNING - xdg-mime did not record a default for $t"
+done
+
+# ── 2. stop the interlopers being offered at all ─────────────────────────────
+# [Default Applications] alone fixes what opens. This block additionally keeps
+# ChatGPT out of Dolphin's "Open With" list for web content, where it is only
+# ever a misclick. There is no xdg-mime verb for [Removed Associations], and
+# mimeapps.list is INI, so kwriteconfig6 is the right tool - it is the same API
+# System Settings uses and it will not reformat the rest of the file.
+#
+# NB: guarded rather than assumed. kwriteconfig6 is Plasma's; this repo targets
+# Plasma, but the tie-break above is the actual fix and must not depend on it.
+if command -v kwriteconfig6 >/dev/null 2>&1; then
+  for app in "${INTERLOPERS[@]}"; do
+    [ -f "/usr/share/applications/$app" ] || continue
+    for t in "${WEB_TYPES[@]}"; do
+      # Only the ones it really claims - a Removed Association for a type an app
+      # never declared is dead config that outlives the reason for it.
+      grep -q "^MimeType=.*${t}[;$]" "/usr/share/applications/$app" 2>/dev/null || continue
+      cur=$(kreadconfig6 --file "$MIMEAPPS" --group "Removed Associations" --key "$t" 2>/dev/null)
+      case ";$cur;" in
+        *";$app;"*) continue ;;
+      esac
+      kwriteconfig6 --file "$MIMEAPPS" --group "Removed Associations" --key "$t" \
+        "${cur:+$cur;}$app" && _changed=1
+    done
+  done
+fi
+
+# ── 3. report ────────────────────────────────────────────────────────────────
+if [ "$_changed" -eq 0 ]; then
+  echo "  default-apps: http/https already pinned to ${BROWSER_DESKTOP%.desktop}"
+else
+  echo "  default-apps: http/https/text-html -> ${BROWSER_DESKTOP%.desktop}"
+fi
+
+# The app-specific schemes are NOT touched by any of the above and must keep
+# working - codex:// is how the Codex CLI finishes signing in, claude-cli:// how
+# Claude Code does. Say so if one has gone missing rather than leaving it to be
+# discovered during a login.
+for s in x-scheme-handler/codex x-scheme-handler/claude-cli; do
+  h=$(xdg-mime query default "$s" 2>/dev/null)
+  [ -n "$h" ] || echo "  default-apps: WARNING - no handler for ${s#x-scheme-handler/}://"
+done
