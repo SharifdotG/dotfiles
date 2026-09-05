@@ -4,12 +4,23 @@
 #   git clone <this repo> ~/dotfiles && ~/dotfiles/bootstrap.sh
 #
 # Flags: --dry-run  --no-packages  --no-desktop  --no-gaming  --no-creative
-#        --profile=laptop|desktop  --force
+#        --profile=laptop|desktop  --cpu=intel|amd  --gpu=intel|amd|nvidia|none
+#        --force
 # Idempotent: safe to re-run, and re-running is the normal update path.
 #
 # Two machines share this repo. Which one you are on is DETECTED from the
 # hardware (see lib/detect.sh), never from a hostname - so a fresh machine is
-# correct with no setup step. --profile forces it; so does DOTFILES_PROFILE.
+# correct with no setup step. The three axes are independent and each has an
+# override, because a chassis type is not a CPU vendor and neither is a GPU:
+#
+#   --profile=desktop --cpu=amd --gpu=amd     (or DOTFILES_PROFILE /
+#                                              DOTFILES_CPU_VENDOR / DOTFILES_GPU)
+#
+# Together they let the machine you are NOT sitting at be dry-run from the one
+# you are - the only way to review the other machine's package set before its
+# hardware exists. All three were always honoured by lib/detect.sh; only
+# --profile used to have a flag, so the other two were discoverable exclusively
+# by reading detect.sh.
 set -uo pipefail
 cd "$(dirname "$0")"
 REPO="$PWD"
@@ -28,6 +39,8 @@ for a in "$@"; do case "$a" in
   # the highest-precedence source. One code path decides the profile, and it
   # lives in detect.sh - this flag just feeds it.
   --profile=*)   export DOTFILES_PROFILE="${a#*=}" ;;
+  --cpu=*)       export DOTFILES_CPU_VENDOR="${a#*=}" ;;
+  --gpu=*)       export DOTFILES_GPU="${a#*=}" ;;
   --force)       FORCE=1 ;;
   # NB: derived, not a hardcoded line range. This was `sed -n '2,12p'`, which
   # printed five lines of shell (set -uo pipefail, the cd, the sources) once the
@@ -70,6 +83,15 @@ esac
 # so rather than dying, because that machine is still usable.
 case "$GPU" in
   none|mixed) warn "GPU detected as '$GPU' - no packages/gpu-*.tsv will be selected" ;;
+esac
+# NB: same reasoning for the CPU axis, which had no warning at all even though
+# detect.sh:CPU_VENDOR can return `unknown` exactly like GPU can return `none`.
+# The consequence is quieter and therefore worse: no packages/cpu-*.tsv is
+# selected, so on an Intel machine thermald is simply never installed and the
+# only trace is a manifest list one line shorter than you expected.
+case "$CPU_VENDOR" in
+  intel|amd) ;;
+  *) warn "CPU vendor detected as '$CPU_VENDOR' - no packages/cpu-*.tsv will be selected" ;;
 esac
 
 # This repo used to carry a fedora column too. It does not any more - the
@@ -307,6 +329,48 @@ if command -v chezmoi >/dev/null; then
       run chezmoi init --source "$REPO" \
         --promptString "profile=$PROFILE" --promptString "gpu=$GPU"
     fi
+
+    # ── repair a stored answer that is present but WRONG ────────────────────
+    # NB: the re-init above handles a MISSING key and nothing else. A wrong
+    # value survives it silently, and `chezmoi init --promptString profile=...`
+    # cannot fix one: promptStringOnce returns the stored value whenever the key
+    # exists, and --promptString only pre-answers prompts that are ACTUALLY
+    # ASKED. (Two comments in home/.chezmoi.toml.tmpl used to claim otherwise;
+    # they were wrong and have been corrected.) So the value has to be rewritten
+    # in the file, which is what this does.
+    #
+    # NB: this matters because a stale `profile` does not merely pick the wrong
+    # font size - it makes the machine disagree with itself. bootstrap.sh asks
+    # lib/detect.sh and installs gaming.tsv + creative.tsv; home/.chezmoiignore
+    # asks chezmoi's stored copy and SKIPS .config/MangoHud and
+    # .config/gamemode.ini. You end up with gamemode and MangoHud installed and
+    # unconfigured, and MangoHud's config is the llvmpipe tripwire. The usual
+    # way in is copying or restoring ~/.config/chezmoi/chezmoi.toml from the
+    # other machine (see docs/BACKUP.md), which is a supported thing to do.
+    #
+    # NB: the substitution keeps the leading indent and the `=` alignment, so
+    # the file stays byte-identical apart from the value. scripts/doctor.sh
+    # checks both keys against a live read, so a machine that never re-runs
+    # bootstrap still finds out.
+    CM_REPAIRED=0
+    cm_fix_key() { # cm_fix_key <key> <detected value>
+      local cur
+      cur=$(sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\"\(.*\)\"[[:space:]]*\$/\1/p" \
+            "$CHEZMOI_TOML" 2>/dev/null | head -1)
+      [ -n "$cur" ] && [ "$cur" != "$2" ] || return 0
+      warn "stored chezmoi .$1 says '$cur' but this machine detects '$2' - repairing"
+      run sed -i "s|^\([[:space:]]*$1[[:space:]]*=[[:space:]]*\)\".*\"[[:space:]]*\$|\1\"$2\"|" \
+        "$CHEZMOI_TOML"
+      CM_REPAIRED=1
+    }
+    cm_fix_key profile "$PROFILE"
+    cm_fix_key gpu     "$GPU"
+    if [ "$CM_REPAIRED" -eq 1 ]; then
+      # Re-render from the template now that the stored answers are right.
+      # promptStringOnce reads the corrected values, so this asks nothing.
+      run chezmoi init --source "$REPO"
+    fi
+
     run chezmoi apply --source "$REPO"
   else
     info "first run - chezmoi will prompt for name/email/desktop"

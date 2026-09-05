@@ -3,8 +3,21 @@
 {{- /*
      NB: promptStringOnce only asks when the key is ABSENT from
      ~/.config/chezmoi/chezmoi.toml, so carrying that file across from another
-     machine silently keeps the old answer and never prompts. Force it with:
-         chezmoi init --promptString desktop=plasma
+     machine silently keeps the old answer and never prompts.
+
+     NB: and --promptString does NOT override a stored answer. This comment used
+     to say "Force it with: chezmoi init --promptString desktop=plasma", which is
+     wrong: promptStringOnce returns the stored value whenever the key exists, so
+     it never reaches the prompt that --promptString would have pre-answered. The
+     flag only supplies values for prompts that are ACTUALLY ASKED. To change a
+     stored answer you must change or remove the key:
+
+         # edit the value, then re-render
+         $EDITOR ~/.config/chezmoi/chezmoi.toml && chezmoi init --source ~/dotfiles
+
+     bootstrap.sh does exactly that, automatically, for `profile` and `gpu` when
+     they disagree with the detected hardware, and scripts/doctor.sh fails on the
+     mismatch so a machine that never re-runs bootstrap still finds out.
 */ -}}
 {{- $desktop := promptStringOnce . "desktop" "Desktop session (plasma/none)" "plasma" -}}
 {{- /*
@@ -39,11 +52,25 @@
 
      bootstrap.sh passes both with --promptString, so lib/detect.sh is the
      single decision-maker and these defaults only apply to a bare
-     `chezmoi init`. Force a re-answer with:
-         chezmoi init --promptString profile=desktop
+     `chezmoi init` on a config that does not have the keys yet.
+
+     NB: NOT "force a re-answer with --promptString" - see the note further up.
+     Once the key is stored, --promptString is inert. bootstrap.sh repairs a
+     wrong value by rewriting it in chezmoi.toml, which is the only thing that
+     actually works.
+
+     NB: the two detections below deliberately mirror lib/detect.sh step for
+     step - same precedence, same answers, including `mixed`. They used to
+     differ, and a second implementation of the same decision is a second thing
+     to keep right: the old profile line tested for a battery FIRST, which
+     misreads a desktop on a UPS as a laptop (the exact case detect.sh documents
+     and avoids), and the old gpu line was last-match-wins, so a hybrid machine
+     answered "nvidia" where detect.sh says "mixed" and warns. Only reachable
+     via a bare `chezmoi init`, but "only reachable when you are not using the
+     script" is precisely when you want the fallback to be right.
 */ -}}
-{{- $autoProfile := output "sh" "-c" "if [ -e /sys/class/power_supply/BAT0 ]; then echo laptop; else case \"$(cat /sys/class/dmi/id/chassis_type 2>/dev/null)\" in 8|9|10|11|14) echo laptop ;; *) echo desktop ;; esac; fi" | trim -}}
-{{- $autoGpu := output "sh" "-c" "g=none; grep -qs 0x8086 /sys/class/drm/card*/device/vendor && g=intel; grep -qs 0x1002 /sys/class/drm/card*/device/vendor && g=amd; grep -qs 0x10de /sys/class/drm/card*/device/vendor && g=nvidia; echo $g" | trim -}}
+{{- $autoProfile := output "sh" "-c" "p=\"${DOTFILES_PROFILE:-}\"; [ -z \"$p\" ] && [ -r /etc/dotfiles-profile ] && p=$(tr -d '[:space:]' < /etc/dotfiles-profile 2>/dev/null); if [ -z \"$p\" ]; then case \"$(cat /sys/class/dmi/id/chassis_type 2>/dev/null)\" in 8|9|10|11|14) p=laptop ;; *) if ls -d /sys/class/power_supply/BAT* >/dev/null 2>&1; then p=laptop; else p=desktop; fi ;; esac; fi; echo \"$p\"" | trim -}}
+{{- $autoGpu := output "sh" "-c" "g=\"${DOTFILES_GPU:-}\"; if [ -z \"$g\" ]; then s=\"\"; for v in /sys/class/drm/card*/device/vendor; do [ -r \"$v\" ] || continue; case \"$(cat \"$v\")\" in 0x8086) n=intel ;; 0x1002) n=amd ;; 0x10de) n=nvidia ;; *) continue ;; esac; case \" $s \" in *\" $n \"*) ;; *) s=\"$s $n\" ;; esac; done; set -- $s; case $# in 0) g=none ;; 1) g=$1 ;; *) g=mixed ;; esac; fi; echo \"$g\"" | trim -}}
 {{- $profile := promptStringOnce . "profile" "Machine profile (laptop/desktop)" $autoProfile -}}
 {{- $gpu := promptStringOnce . "gpu" "GPU vendor (intel/amd/nvidia/none)" $autoGpu -}}
 {{- /*

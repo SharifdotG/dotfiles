@@ -29,3 +29,4 @@ starship	starship	skip	starship
 base-devel	base-devel	skip	skip	a group, not a package; prerequisite for any AUR build
 pacman-contrib	pacman-contrib	skip	skip	provides paccache, used by scripts/reclaim.sh
 paru	paru	skip	skip	AUR helper; CachyOS preinstalls it, --needed makes this a no-op
+linux-firmware	linux-firmware	skip	skip	the vendor firmware meta-package (-amdgpu, -intel, -mediatek, -realtek, ...). Listed for the same reason vulkan-intel is: it is present today only because the INSTALLER put it there. Verified - `pacman -Qi linux-firmware` says "Explicitly installed" and "Required By: None", linux-cachyos depends on nothing but coreutils/kmod/initramfs, and `base` does not pull it either. Nothing would reinstall it on a rebuild. The desktop's Wi-Fi is the concrete case: the MT7601U dongle needs /usr/lib/firmware/mt7601u.bin.zst from the -mediatek split, and without it the driver binds and the adapter is simply dead

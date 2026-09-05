@@ -3,6 +3,19 @@
 # NB: there is no AMD counterpart to thermald and none is needed - k10temp is
 # in-tree and the SMU manages boost itself. What AMD desktops DO need is a
 # sensor driver the kernel does not ship, below.
+#
+# NB: nct6687d-dkms-git is NOT an AMD-CPU fact and does not really belong here.
+# It is a MOTHERBOARD fact - the Nuvoton Super-I/O chip on MSI B450/B550 boards -
+# and there is no board axis, so it rides the CPU axis because on the two
+# machines this repo has, "AMD CPU" and "that MSI board" are the same machine.
+# lib/detect.sh's own warning applies to this row: folding two facts into one
+# axis is how a third machine gets the wrong answer. Concretely, an AMD LAPTOP
+# would build this DKMS module every kernel bump for a chip it does not have.
+# That is wasteful, not broken, so it is not worth inventing a fourth axis for -
+# but the genuinely broken direction (an Intel DESKTOP getting a modules-load.d
+# entry for a module nothing installed, failing systemd-modules-load at every
+# boot) IS closed, in system/apply.sh, which now also requires the module to
+# exist. Add a board axis here only if a third machine actually arrives.
 #id	arch	aur	nix	notes
 lm_sensors	lm_sensors	skip	skip	`sensors` and the detection helper. On its own it finds k10temp (CPU die) and nothing else - fan RPM and board voltages need the driver on the next row
 nct6687d-dkms-git	skip	nct6687d-dkms-git	skip	out-of-tree driver for the Nuvoton chip on MSI B450/B550 boards (B450M Mortar MAX included). The IN-TREE nct6683 binds the same chip but is read-only and reports nothing useful; nct6687 is the one that exposes fan1_input and pwm control. system/apply.sh installs the modules-load.d drop-in that actually loads it. NB: DKMS, so it rebuilds on every kernel bump - if `sensors` goes quiet after an update, check `dkms status` first

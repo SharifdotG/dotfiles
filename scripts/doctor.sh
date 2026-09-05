@@ -77,17 +77,67 @@ step "GPU & display stack"
 # Vulkan driver does not error, the loader substitutes llvmpipe and the machine
 # renders on the CPU. Both look like "it got slow", never like a broken config.
 
-# NB: chezmoi bakes `gpu` into ~/.config/chezmoi/chezmoi.toml at init and never
-# re-reads the hardware, so swapping a card leaves the stored answer stale and
-# LIBVA_DRIVER_NAME wrong forever. Compare the stored value against a live PCI
-# read. This is the house rule applied to the profile mechanism itself.
+# NB: chezmoi bakes `profile` AND `gpu` into ~/.config/chezmoi/chezmoi.toml at
+# init and never re-reads the hardware, so a config carried over from the other
+# machine - or restored from a backup, see docs/BACKUP.md - keeps the OLD answer
+# forever. Compare BOTH stored values against a live read. This is the house
+# rule applied to the profile mechanism itself.
+#
+# NB: `gpu` going stale is silent - LIBVA_DRIVER_NAME is then wrong and VA-API
+# just stops. `profile` going stale is WORSE, because it makes the machine
+# disagree with ITSELF: bootstrap.sh asks lib/detect.sh and installs gaming.tsv
+# and creative.tsv, while home/.chezmoiignore asks chezmoi's stored copy and
+# SKIPS .config/MangoHud and .config/gamemode.ini. The result is gamemode and
+# MangoHud installed with no configuration at all - and MangoHud's config is the
+# llvmpipe tripwire, so the one thing that would have shown you the GPU had been
+# silently substituted is the thing that goes missing. Only `gpu` was checked
+# here for a while, which is why this NB is longer than the code.
+#
+# NB: re-running `chezmoi init --promptString profile=...` does NOT repair a
+# WRONG value - promptStringOnce returns the stored value whenever the key
+# exists, and --promptString only pre-populates prompts that are actually asked.
+# bootstrap.sh rewrites the key in place for that reason; see the note there.
 _cmtoml="${XDG_CONFIG_HOME:-$HOME/.config}/chezmoi/chezmoi.toml"
-_bakedgpu=$(sed -n 's/^[[:space:]]*gpu[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' \
-            "$_cmtoml" 2>/dev/null | head -1)
+_baked() {
+  sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\"\(.*\)\"[[:space:]]*\$/\1/p" \
+    "$_cmtoml" 2>/dev/null | head -1
+}
+_bakedprofile=$(_baked profile)
+_bakedgpu=$(_baked gpu)
+if [ -z "$_bakedprofile" ]; then
+  note "chezmoi .profile" "<not set - run: chezmoi init --source \"$PWD\">"
+else
+  chk "chezmoi .profile matches hardware" "$PROFILE" "$_bakedprofile"
+fi
 if [ -z "$_bakedgpu" ]; then
   note "chezmoi .gpu" "<not set - run: chezmoi init --source \"$PWD\">"
 else
   chk "chezmoi .gpu matches hardware" "$GPU" "$_bakedgpu"
+fi
+
+# NB: the THIRD baked value, and the one that breaks loudest while being checked
+# least. sourceDir is written once at `chezmoi init` and never revisited, so
+# MOVING the repo leaves every bare chezmoi command - apply, diff, status, add,
+# re-add, update - pointing at a directory that no longer exists. bootstrap.sh
+# hides it completely, because it always passes --source "$REPO"; the breakage
+# surfaces only the first time you run chezmoi by hand, which is the moment you
+# are least willing to suspect the tool. .chezmoi.toml.tmpl predicted this in
+# the comment above the key ("Move the repo and re-run chezmoi init --source
+# <new path>") and then nothing ever checked it - which is the same shape as
+# `profile` being unchecked above. Found live, on this laptop, by running
+# `chezmoi status` after the repo moved out of ~/Documents/Code.
+#
+# NB: doctor.sh cd's to the repo root on line 4, so $PWD IS the repo and
+# $PWD/home is the expected value exactly (sourceDir stores the post-.chezmoiroot
+# path). Compare rather than merely testing -d, so a config pointing at a
+# DIFFERENT but existing checkout is still caught.
+_bakedsrc=$(_baked sourceDir)
+if [ -z "$_bakedsrc" ]; then
+  note "chezmoi sourceDir" "<not set - run: chezmoi init --source \"$PWD\">"
+else
+  chk "chezmoi sourceDir is this repo" "$PWD/home" "$_bakedsrc"
+  [ "$_bakedsrc" = "$PWD/home" ] ||
+    note "  fix" "chezmoi init --source \"$PWD\"$([ -d "$_bakedsrc" ] || echo '   (stored path does not exist)')"
 fi
 
 # What the APPS actually get. Not $LIBVA_DRIVER_NAME from this shell - that is
@@ -125,6 +175,27 @@ else
   note "  ICD" "${_icd:-<none>}"
 fi
 note "GPU" "$(lspci -nn 2>/dev/null | sed -n 's/.*\(VGA compatible controller\|3D controller\)[^:]*: //p' | head -1)"
+
+# NB: a note, not a chk, and deliberately so - the scale is a preference, not a
+# defect. But it is a preference three templates SILENTLY depend on, and nothing
+# else in this repo ever reads it back. Plasma multiplies every point size by
+# this factor, which is why ghostty (font-size 10 vs 12), the kde-theme script
+# (UI fonts and cursor size) and fontconfig all branch on .profile with the
+# 1.25-vs-1.00 split baked into their comments. Change the scale in System
+# Settings and those three become quietly wrong, with no error anywhere. Printing
+# it is what makes that assumption falsifiable.
+#
+# NB: kwinoutputconfig.json, not kdeglobals - under Wayland the scale is per
+# OUTPUT and kdeglobals carries nothing. Multiple values mean mixed-DPI outputs.
+_scale=$(grep -o '"scale"[[:space:]]*:[[:space:]]*[0-9.]*' \
+         "${XDG_CONFIG_HOME:-$HOME/.config}/kwinoutputconfig.json" 2>/dev/null |
+         sed 's/.*:[[:space:]]*//' | sort -u | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+case "$PROFILE" in
+  laptop)  _want=1.25 ;;
+  desktop) _want=1 ;;
+  *)       _want='?' ;;
+esac
+note "Plasma scale" "${_scale:-<unknown>} (templates assume $_want for profile=$PROFILE)"
 
 step "Memory pressure defences"
 chk "vm.swappiness"              180      "$(sysctl -n vm.swappiness 2>/dev/null)"
@@ -522,17 +593,32 @@ if [ "$GPU" = amd ]; then
   chk "lactd enabled" enabled "${_lactd:-not-found}"
 fi
 
-# NB: loaded is NOT the same as bound. nct6687 inserts happily on a board
-# without the chip and then reports nothing at all, so read SENSORS back rather
-# than lsmod. A fan RPM is the only honest proof the driver found hardware.
-if lsmod 2>/dev/null | grep -q '^nct6687'; then
-  ok "nct6687 module loaded"
+# NB: gated on the driver being INSTALLED at all, mirroring the same guard in
+# system/apply.sh. nct6687 is a motherboard fact riding the CPU axis (see
+# packages/cpu-amd.tsv): on the MSI board this repo targets it is always there,
+# so a failure below is real - but on any other desktop it never would be, and a
+# permanent red line for a Nuvoton chip the board does not have is noise, not a
+# finding.
+if ! { modinfo nct6687 >/dev/null 2>&1 ||
+       [ -n "$(find /lib/modules -name 'nct6687.ko*' -print -quit 2>/dev/null)" ]; }; then
+  note "nct6687" "<driver not installed - no board-sensor support on this machine>"
 else
-  chk "nct6687 module loaded" yes no
+  # NB: loaded is NOT the same as bound. nct6687 inserts happily on a board
+  # without the chip and then reports nothing at all, so read SENSORS back rather
+  # than lsmod. A fan RPM is the only honest proof the driver found hardware.
+  #
+  # NB: `chk` on BOTH outcomes, never `ok` on the success path. `ok` prints a
+  # green line but increments nothing, so this check used to enter the
+  # pass/fail denominator ONLY when it failed - the total at the foot of the
+  # report was 1 smaller on a healthy desktop than on a broken one. A
+  # denominator that moves with the result is precisely the quiet dishonesty
+  # this whole script exists to catch.
+  chk "nct6687 module loaded" yes \
+      "$(lsmod 2>/dev/null | grep -q '^nct6687' && echo yes || echo no)"
+  _fans=$(sensors 2>/dev/null | grep -ciE '^fan[0-9]+:' || true)
+  chk "board reports fan RPM" yes "$([ "${_fans:-0}" -gt 0 ] && echo yes || echo no)"
+  note "  fans seen" "${_fans:-0}"
 fi
-_fans=$(sensors 2>/dev/null | grep -ciE '^fan[0-9]+:' || true)
-chk "board reports fan RPM" yes "$([ "${_fans:-0}" -gt 0 ] && echo yes || echo no)"
-note "  fans seen" "${_fans:-0}"
 # Tctl is the AMD die sensor (k10temp). Fall back to whatever the first
 # reported package/core temperature is, so this is never a blank line.
 _temp=$(sensors 2>/dev/null |

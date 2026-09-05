@@ -42,6 +42,7 @@
 #        splash={{ if stat (joinPath .chezmoi.homeDir ".local/share/plasma/look-and-feel/Catppuccin-Latte-Blue-splash/contents/splash/Splash.qml") }}y{{ else }}n{{ end }}
 #        cursor={{ if stat (joinPath .chezmoi.homeDir ".local/share/icons/WhiteSur-cursors/index.theme") }}y{{ else if stat "/usr/share/icons/WhiteSur-cursors/index.theme" }}y{{ else }}n{{ end }}
 #        kwrite={{ if lookPath "kwriteconfig6" }}y{{ else }}n{{ end }}
+#        profile={{ .profile }}
 #        session={{ output "sh" "-c" "pgrep -x plasmashell >/dev/null 2>&1 && echo live || echo headless" }}
 
 set -uo pipefail
@@ -55,22 +56,44 @@ LOOKANDFEEL="Catppuccin-Latte-Blue"
 SPLASH="Catppuccin-Latte-Blue-splash"
 ICONS="WhiteSur"
 CURSOR="WhiteSur-cursors"
-CURSOR_SIZE=24
+# ── sizes: the ONLY thing on this screen that is per-machine ────────────────
+# NB: a point is supposed to be a physical unit, so "the same size looks the
+# same everywhere". It does not: Plasma MULTIPLIES every point size and the
+# cursor size by the display scale factor, and the two machines run different
+# factors - 125 % on the laptop's ~157 ppi panel, 100 % on the desktop's ~102
+# ppi one. A single hardcoded number therefore renders ~25 % physically smaller
+# on the desktop, on the lower-DPI screen where that hurts more.
+#
+# This is the identical trap that ghostty solves in
+# home/private_dot_config/ghostty/config.ghostty.tmpl (font-size 10 vs 12), and
+# it went unnoticed here for longer only because this file was already a .tmpl
+# for an unrelated reason, so nothing flagged that it never used .profile.
+# 10 x 1.25 and 12 x 1.0 land in the same physical place; so do 24 x 1.25 and 32.
+#
+# NB: if you change a machine's Plasma scale in System Settings, change these
+# with it - and ghostty's font-size, and re-read the fontconfig note.
+# scripts/doctor.sh prints the live scale next to what these assume, which is
+# the only reason that instruction is checkable rather than hopeful.
+{{ if eq .profile "laptop" -}}
+UI_PT=10; UI_SMALL_PT=9; MONO_PT=10; CURSOR_SIZE=24
+{{- else -}}
+UI_PT=12; UI_SMALL_PT=11; MONO_PT=12; CURSOR_SIZE=32
+{{- end }}
 WALLPAPER="${XDG_DATA_HOME:-$HOME/.local/share}/wallpapers/Catppuccin-Latte/contents/images/3840x2160.png"
 LOCK_WALLPAPER="$WALLPAPER"
 
 # Qt6 font spec: Family,size,-1,5,weight,italic,underline,strikeout,fixed,...
 # Plasma 6 uses REAL weights (400 = regular). Plasma 5 used 50 here; a 5-era
 # string is not a parse error, it just silently renders everything semi-bold.
-UI_FONT="Adwaita Sans,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
-UI_FONT_SMALL="Adwaita Sans,9,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
-UI_FONT_BOLD="Adwaita Sans,10,-1,5,700,0,0,0,0,0,0,0,0,0,0,1"
+UI_FONT="Adwaita Sans,$UI_PT,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
+UI_FONT_SMALL="Adwaita Sans,$UI_SMALL_PT,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
+UI_FONT_BOLD="Adwaita Sans,$UI_PT,-1,5,700,0,0,0,0,0,0,0,0,0,0,1"
 # NB: "CaskaydiaCove Nerd Font", not "Cascadia Code NF". The package is
 # ttf-cascadia-code-nerd but the patched fonts inside it register as Caskaydia
 # Cove; the old string matched nothing and Qt fell back to a proportional sans.
 # Must stay identical to the monospace family in
 # ~/.config/fontconfig/fonts.conf - see the long note there.
-MONO_FONT="CaskaydiaCove Nerd Font,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
+MONO_FONT="CaskaydiaCove Nerd Font,$MONO_PT,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
 
 if ! command -v kwriteconfig6 >/dev/null 2>&1; then
   echo "  kde-theme: no kwriteconfig6 - not a Plasma 6 machine, skipping"

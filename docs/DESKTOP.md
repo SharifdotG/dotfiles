@@ -2,9 +2,12 @@
 
 **Machine:** Ryzen 5 3600 (6C/12T, Zen 2) · 16 GB DDR4-2400 · Radeon RX 570 8 GB
 (Polaris, gfx803) · MSI B450M Mortar MAX · 500 GB Samsung 970 EVO NVMe +
-1 TB WD 7200 RPM (NTFS today, **reformatted** into the game library) · 450 W PSU
+1 TB Seagate ST1000LM024, 2.5" **5400 RPM** (NTFS today, **reformatted** into
+the game library) · 450 W PSU
 **Displays:** Esonic 22ELMW 1920×1080 (primary, right, ~102 ppi) · Samsung
 S19F350 1366×768 (left, ~85 ppi) — both at 100 % scale
+**Network:** Realtek RTL8111H gigabit ethernet (in-tree `r8169`) · MediaTek
+MT7601U 802.11n USB Wi-Fi (`148f:7601`, in-tree `mt7601u`) — see Phase 0
 **Target:** CachyOS + KDE Plasma 6 / Wayland, Windows removed from the NVMe
 
 This is the desktop's counterpart to `docs/SETUP-GUIDE.md`. It covers **only what
@@ -77,6 +80,31 @@ Pick the **v3** repo tier. Zen 2 is `x86-64-v3`, same as the laptop — `os/cach
 detects this from `ld.so` and `doctor.sh`'s Platform check verifies it, because a
 v4 package on a v3 CPU installs cleanly and then dies with SIGILL at runtime,
 which reads exactly like failing RAM.
+
+### Network — bootstrap over ethernet
+
+**Both adapters work with in-tree drivers. Neither needs a DKMS package, and
+none is in `packages/`** — that absence is deliberate, not an oversight:
+
+| | Chip | Driver | Firmware |
+|---|---|---|---|
+| Ethernet | Realtek RTL8111H | `r8169` | `linux-firmware-realtek` |
+| Wi-Fi | MediaTek MT7601U (`148f:7601`) | `mt7601u` | `linux-firmware-mediatek` |
+
+Verified on the laptop with the dongle attached: `mt7601u` binds it, the
+firmware loads, and it comes up as a NetworkManager-managed `wlan*` device with
+no configuration at all.
+
+**Use the ethernet cable for `bootstrap.sh` anyway.** It pulls the better part of
+a gigabyte of packages, and the MT7601U is a single-band 802.11n dongle - the
+slow path on a step where a dropped connection means a half-finished pacman
+transaction.
+
+The firmware is the part worth knowing about. `mt7601u` is useless without
+`/usr/lib/firmware/mt7601u.bin.zst`, which comes from the `linux-firmware-mediatek`
+split package - so `packages/core.tsv` lists `linux-firmware` (the meta-package
+over every vendor split) explicitly rather than trusting the installer to have
+pulled it in. **Nothing in `base` or in the kernel package depends on it.**
 
 ---
 
@@ -191,9 +219,11 @@ and accept that you have traded throughput for tidiness.
 UUID=<the-uuid>  /mnt/games  ext4  defaults,noatime  0 2
 ```
 
-`noatime` matters here more than on the NVMe: this is a 7200 RPM spinning disk,
-and every access-time update is a seek plus a write on a drive whose whole job is
-sequential reads.
+`noatime` matters here more than on the NVMe: this is a 5400 RPM 2.5" spinning
+disk, and every access-time update is a seek plus a write on a drive whose whole
+job is sequential reads. The slower the spindle, the more each avoided seek is
+worth - this is not a 7200 RPM desktop drive, and the option earns more here than
+it would on one.
 
 ```bash
 sudo mkdir -p /mnt/games && sudo systemctl daemon-reload && sudo mount -a
@@ -217,10 +247,17 @@ diff <(sed 's|  ./|  |' /tmp/old.sha256) <(sed 's|  ./|  |' /tmp/final.sha256) &
 - **Heroic** → Settings → Default install path → `/mnt/games/Heroic`.
 
 Both libraries belong here rather than on the NVMe: a 500 GB NVMe holding the OS
-plus a modern game library fills up fast, and this is precisely the workload a
-spinning disk is still good at — large sequential reads that are not latency
-critical. Shader caches stay on the NVMe where Steam already puts them
-(`~/.steam`), and that is the part that actually benefits from the fast disk.
+plus a modern game library fills up fast, and large sequential reads that are not
+latency critical are the workload a spinning disk handles least badly. Shader
+caches stay on the NVMe where Steam already puts them (`~/.steam`), and that is
+the part that actually benefits from the fast disk.
+
+**Be honest about the drive, though.** A 5400 RPM 2.5" disk is slow even by
+spinning-disk standards, so expect longer level loads and a visible first-run
+shader compile. For the games actually played on this machine that is a
+non-issue; it is not the disk to put a big open-world title on. If one ever
+matters enough, move that single game to the NVMe rather than rethinking the
+split.
 
 **The reason this whole phase exists:** while the disk was NTFS, none of it was
 possible. Steam does not support NTFS libraries — Proton breaks on its
@@ -230,6 +267,16 @@ installs perfectly and then will not launch, with nothing useful in the logs.
 NTFS mount, because that trap is one reformat away from being re-set.
 
 ## Phase 3 — GPU: proving the driver is real
+
+> **NB — the card is a Sapphire RX 570 8 GB, and a tool may tell you otherwise.**
+> Under Windows this machine ran a *modded* display driver that reports the card
+> as an **"RX 580X 4 GB"**. That name is a driver artefact, not the hardware: an
+> automated cross-check of this repo read it and "found" that every RX 570 / 8 GB
+> reference here was wrong. It is not. Linux uses the in-tree `amdgpu` driver and
+> needs no such mod, so `lspci` and `radeontop` report the real card. Both are
+> Polaris 20 / gfx803 in any case, so **no package or driver decision changes
+> either way** - only the VRAM figure and the PSU arithmetic below would, and
+> those are written for the real 8 GB card. Do not "correct" them.
 
 This is the section worth reading twice, because **every failure mode here is
 silent.** Vulkan does not error when the driver is missing; the loader falls back

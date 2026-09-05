@@ -99,10 +99,43 @@ if [ "$GPU" = amd ]; then
   # that has bitten it before.
   if [ "$CHANGED" -eq 1 ]; then INITRAMFS_STALE=1; fi
 fi
+# NB: gated on PROFILE **and** on the module actually existing, because this is
+# the one fact in this repo that is neither a CPU fact nor a chassis fact - it is
+# a MOTHERBOARD fact (the Nuvoton Super-I/O on MSI B450/B550), and it is being
+# carried on two unrelated axes: packages/cpu-amd.tsv ships the driver by
+# CPU_VENDOR, this drop-in is installed by PROFILE. That lands correctly on the
+# machines this repo has, and wrongly on both combinations it does not:
+#
+#   Intel desktop -> PROFILE=desktop installs a drop-in naming a module that
+#                    cpu-intel.tsv never installed, and systemd-modules-load.service
+#                    then FAILS on every single boot.
+#   AMD laptop    -> cpu-amd.tsv builds a DKMS driver for a chip that is not there.
+#
+# The PROFILE test closes the second. `modinfo` closes the first, and is the
+# honest question anyway: "is this module installed", not "does this machine look
+# like the one I was written for". Loading it on a board without the chip is
+# harmless (it inserts and reports nothing - see the note in scripts/doctor.sh);
+# naming a module that does not exist is not.
+#
+# NB: modinfo only searches the RUNNING kernel's tree. Straight after a kernel
+# update the DKMS module exists for the new kernel and not the booted one, so ask
+# the module tree directly before concluding it is absent - otherwise this
+# silently stops installing the drop-in on exactly the reboot where you are
+# already suspicious of the sensors.
+have_nct6687() {
+  modinfo nct6687 >/dev/null 2>&1 && return 0
+  [ -n "$(find /lib/modules -name 'nct6687.ko*' -print -quit 2>/dev/null)" ]
+}
 if [ "$PROFILE" = desktop ]; then
-  info "Board sensors (Nuvoton, MSI B450/B550)"
-  install_file modules-load.d/99-nct6687.conf \
-               /etc/modules-load.d/99-nct6687.conf
+  if have_nct6687; then
+    info "Board sensors (Nuvoton, MSI B450/B550)"
+    install_file modules-load.d/99-nct6687.conf \
+                 /etc/modules-load.d/99-nct6687.conf
+  else
+    info "skipping nct6687 drop-in - module not installed (cpu=$CPU_VENDOR).
+       A modules-load.d entry for a module that does not exist fails
+       systemd-modules-load.service at every boot."
+  fi
 fi
 
 [ "$DRY" -eq 1 ] && { info "dry run - nothing written"; exit 0; }
