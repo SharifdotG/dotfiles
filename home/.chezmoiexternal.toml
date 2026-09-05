@@ -107,7 +107,7 @@
 #                           BorderSize=None, BorderSizeAuto=false
 #     [plasmarc][Theme]     name=default   (it ships no Plasma style)
 #     [KSplash]             Theme=Catppuccin-Latte-Blue-splash  <- want
-# It sets NO icon theme, so WhiteSur icons are untouched by it. The cursor and
+# It sets NO icon theme, so the Breeze icons are untouched by it. The cursor and
 # decoration lines are the two we do not want, and the theme script re-asserts
 # both AFTER applying the package - user config outranks ~/.config/kdedefaults/,
 # which is where a look-and-feel writes its defaults.

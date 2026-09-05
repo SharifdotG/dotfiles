@@ -1520,7 +1520,7 @@ screen, and the media keys work including `Shift`+volume for 1% steps.
 Worth adding: a shortcut for Ghostty (`Meta+Return` if you like), and `Ctrl+Shift+Esc` for
 System Monitor.
 
-### 🎨 The look: Catppuccin Latte Blue, Fluent, WhiteSur
+### 🎨 The look: Catppuccin Latte Blue, Breeze icons, WhiteSur cursors
 
 All of this is applied by `home/.chezmoiscripts/run_onchange_after_20-kde-theme.sh` on
 `chezmoi apply`. Nothing here needs clicking through System Settings on a rebuild.
@@ -1529,7 +1529,8 @@ All of this is applied by `home/.chezmoiscripts/run_onchange_after_20-kde-theme.
 |---|---|---|
 | Colours | Catppuccin Latte Blue | `.chezmoiexternal.toml` → one `.colors` file, pinned to `v0.4.0` |
 | Window decoration | **Breeze** — KDE's own, recoloured | nothing to install |
-| Icons | Fluent | `packages/desktop.tsv` → AUR `fluent-icon-theme` |
+| Icons | **Breeze** — KDE's own | nothing to install |
+| Launcher icon | Catppuccin logo | committed, `~/.local/share/icons/hicolor/512x512/apps/catppuccin-latte.png` |
 | Cursors | WhiteSur | `.chezmoiexternal.toml` → archive external |
 | UI font | Adwaita Sans 10 | `packages/desktop.tsv` → `adwaita-fonts` |
 | Mono font | CaskaydiaCove Nerd Font 10 | already there for Ghostty |

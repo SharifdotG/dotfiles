@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Apply the desktop look: Catppuccin Latte Blue colours, Fluent icons,
-# WhiteSur cursors, Adwaita Sans / CaskaydiaCove Nerd Font, the lock screen
-# and the wallpaper.
+# Apply the desktop look: Catppuccin Latte Blue colours, Breeze icons, WhiteSur
+# cursors, the Catppuccin launcher icon, Adwaita Sans / CaskaydiaCove Nerd Font,
+# the lock screen and the wallpaper.
 #
 # WHY A SCRIPT AND NOT MANAGED FILES
 # Plasma OWNS kdeglobals, kcminputrc, kwinrc and plasma-org.kde.plasma.desktop-
@@ -37,7 +37,8 @@
 # Plasma, and the rendered text changes - so the hash changes, so chezmoi
 # re-runs this by itself. No manual step, and no re-running on every apply.
 #
-# state: icons={{ if stat (joinPath .chezmoi.homeDir ".local/share/icons/WhiteSur/index.theme") }}y{{ else if stat "/usr/share/icons/WhiteSur/index.theme" }}y{{ else }}n{{ end }}
+# state: icons={{ if stat "/usr/share/icons/breeze/index.theme" }}y{{ else }}n{{ end }}
+#        launcher={{ if stat (joinPath .chezmoi.homeDir ".local/share/icons/hicolor/512x512/apps/catppuccin-latte.png") }}y{{ else }}n{{ end }}
 #        lnf={{ if stat (joinPath .chezmoi.homeDir ".local/share/plasma/look-and-feel/Catppuccin-Latte-Blue/metadata.json") }}y{{ else }}n{{ end }}
 #        splash={{ if stat (joinPath .chezmoi.homeDir ".local/share/plasma/look-and-feel/Catppuccin-Latte-Blue-splash/contents/splash/Splash.qml") }}y{{ else }}n{{ end }}
 #        cursor={{ if stat (joinPath .chezmoi.homeDir ".local/share/icons/WhiteSur-cursors/index.theme") }}y{{ else if stat "/usr/share/icons/WhiteSur-cursors/index.theme" }}y{{ else }}n{{ end }}
@@ -54,8 +55,21 @@ set -uo pipefail
 COLORSCHEME="CatppuccinLatteBlue"
 LOOKANDFEEL="Catppuccin-Latte-Blue"
 SPLASH="Catppuccin-Latte-Blue-splash"
-ICONS="WhiteSur"
+# NB: breeze, KDE's own, and this is a downgrade in ambition on purpose.
+# WhiteSur was here to match the WhiteSur cursors, which stay - but it is a
+# 195 MB AUR package tracking an upstream that renames its theme directory
+# between releases, and the theme name is what this script writes. Breeze ships
+# with Plasma, cannot go missing, and takes its colours from the Catppuccin
+# scheme anyway, so the desktop still reads as Latte. See packages/unwanted.tsv
+# for the removal half.
+ICONS="breeze"
 CURSOR="WhiteSur-cursors"
+# The panel's application-launcher button. A named icon, not a path: the file is
+# installed into ~/.local/share/icons/hicolor/, which every icon theme inherits
+# from, so the name resolves whatever ICONS is set to above and keeps resolving
+# if that changes. The PNG is the same Catppuccin logo fastfetch uses.
+LAUNCHER_ICON="catppuccin-latte"
+LAUNCHER_ICON_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps/$LAUNCHER_ICON.png"
 # ── sizes: the ONLY thing on this screen that is per-machine ────────────────
 # NB: a point is supposed to be a physical unit, so "the same size looks the
 # same everywhere". It does not: Plasma MULTIPLIES every point size and the
@@ -105,8 +119,8 @@ echo "  kde-theme: $LOOKANDFEEL + $ICONS icons + $CURSOR + $SPLASH splash + Adwa
 # Refuse to point Plasma at a theme that is not on disk.
 #
 # NB: this guard exists because the absence of it caused a real breakage. Icon
-# and cursor themes come from packages (fluent-icon-theme) and externals
-# (WhiteSur), and if the script runs before those land - a first bootstrap, a
+# and cursor themes come from packages and externals (the WhiteSur cursors, and
+# formerly the WhiteSur icons), and if the script runs before those land - a
 # failed AUR build, an external that 404s - kwriteconfig6 will happily write the
 # name anyway. Plasma then falls back per-icon, which does not look like "theme
 # missing", it looks like a half-broken desktop. Writing nothing is strictly
@@ -156,8 +170,8 @@ assert_overrides() {
     kwriteconfig6 --file kdeglobals --group Icons --key Theme "$ICONS"
   else
     echo "  kde-theme: icon theme '$ICONS' not installed - keeping the current one"
-    echo "             (packages/desktop.tsv: whitesur-icon-theme, via paru)"
-    echo "             this re-applies by itself once it is installed"
+    echo "             (breeze ships with Plasma, so this should be unreachable;"
+    echo "             if you see it, something removed a KDE base package)"
   fi
 
   # Cursor. kcminputrc is what Plasma reads. XWayland clients are handled by
@@ -358,6 +372,50 @@ if [ -f "$WALLPAPER" ]; then
     plasma-apply-wallpaperimage "$WALLPAPER" >/dev/null 2>&1
 else
   echo "  kde-theme: wallpaper missing at $WALLPAPER"
+fi
+
+# ── the panel's application-launcher icon ────────────────────────────────────
+# Same rule as the wallpaper directly above: appletsrc is never hand-edited.
+# There is no plasma-apply-* for a widget's icon, but plasmashell exposes its
+# own scripting API on D-Bus - the same one the Global Theme's layout scripts
+# and `plasma-apply-lookandfeel --resetLayout` drive. Writing THROUGH
+# plasmashell means the change lands live, is persisted by the process that owns
+# the file, and cannot lose a race with the rewrite that hand-editing invites.
+#
+# NB: the applet is found by PLUGIN, never by id. This launcher is
+# [Containments][46][Applets][47] on the laptop and will be a different pair of
+# numbers on the desktop - those ids are machine-local inventory of exactly the
+# kind docs/DESKTOP.md refuses to carry for disk UUIDs. All three launcher
+# plugins are matched because which one a panel uses is a preference: kickoff is
+# the default menu, kicker the compact one, kickerdash the full-screen dashboard.
+#
+# NB: guarded on the FILE, not just on the name. Plasma does not fall back
+# visibly when an icon name does not resolve - the button goes blank or shows a
+# generic placeholder, which reads as a broken panel rather than a missing file.
+# The icon is installed by chezmoi from
+# home/private_dot_local/share/icons/hicolor/512x512/apps/, and hicolor is the
+# theme every other icon theme inherits from, so the name resolves under Breeze
+# and would keep resolving under any replacement.
+if [ ! -f "$LAUNCHER_ICON_FILE" ]; then
+  echo "  kde-theme: launcher icon missing at $LAUNCHER_ICON_FILE"
+  echo "             (chezmoi installs it; this re-applies by itself once it lands)"
+elif command -v qdbus6 >/dev/null 2>&1; then
+  if qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript "
+       panels().forEach(function (p) {
+         p.widgets().forEach(function (w) {
+           if (w.type === 'org.kde.plasma.kickoff' ||
+               w.type === 'org.kde.plasma.kicker'  ||
+               w.type === 'org.kde.plasma.kickerdash') {
+             w.currentConfigGroup = ['General'];
+             w.writeConfig('icon', '$LAUNCHER_ICON');
+           }
+         });
+       });
+     " >/dev/null 2>&1; then
+    echo "  kde-theme: launcher icon set to '$LAUNCHER_ICON'"
+  else
+    echo "  kde-theme: could not set the launcher icon (plasmashell scripting API)"
+  fi
 fi
 
 # Make KWin re-read kwinrc so the decoration recolour lands without a relog.

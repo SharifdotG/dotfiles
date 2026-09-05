@@ -50,10 +50,22 @@ mpv	mpv	skip	skip
 claude-desktop	skip	claude-desktop	skip	Anthropic's OFFICIAL Linux build (Chat + Cowork + Claude Code), in beta since 2026-06-30. Official support is Debian/Ubuntu ONLY, via Anthropic's apt repo - the docs tell Arch and Fedora users to run the CLI instead. So this AUR package is the path: it downloads the official .deb from downloads.claude.ai and repackages its payload, plus symlink shims for the Debian paths Cowork hardcodes (virtiofsd, OVMF). Not a third-party rebuild. The qemu-system-x86 + edk2-ovmf + virtiofsd deps are Cowork's VM sandbox and are parity with the .deb's Recommends, which apt installs by default - NOT AUR bloat. See SETUP-GUIDE Phase 5 for the KVM prerequisites, and Phase 4 for the memory tension with the Docker Desktop argument
 chatgpt-desktop	skip	chatgpt-desktop	skip	OpenAI's official Linux binary, repackaged; provides/conflicts `chatgpt`
 # -- desktop theming --------------------------------------------------------
-# The rest of the look is NOT packaged: the Catppuccin Latte Blue colour scheme
-# and the WhiteSur cursors arrive via home/.chezmoiexternal.toml, and
+# NOTHING is packaged here any more, and the empty section is the point: the
+# Catppuccin Latte Blue colour scheme, the splash and the WhiteSur cursors all
+# arrive via home/.chezmoiexternal.toml, and
 # home/.chezmoiscripts/run_onchange_after_20-kde-theme.sh wires all of it into
 # Plasma. Window decoration stays KDE's own Breeze, recoloured by the scheme.
+#
+# NB: whitesur-icon-theme used to be the one row here. The icon theme is now
+# Breeze, which Plasma already ships - so there is no icon package to install,
+# and one fewer AUR build that can fail on a first bootstrap. WhiteSur moved to
+# packages/unwanted.tsv, because dropping a row from THIS file would only stop
+# it being reinstalled and would never take the 195 MB off a disk that has it.
+# The WhiteSur cursors are unaffected: they are an external, not that package.
+#
+# NB: the launcher button's Catppuccin icon is not packaged either - it is a PNG
+# in home/private_dot_local/share/icons/hicolor/, installed by chezmoi and
+# pointed at by the kde-theme script through plasmashell's scripting API.
 #
 # NB: there is NO CATPPUCCIN LOCK SCREEN PACKAGE to add here, checked
 # 2026-09-04. catppuccin/kde's look-and-feel packages contain only a `defaults`
@@ -62,7 +74,6 @@ chatgpt-desktop	skip	chatgpt-desktop	skip	OpenAI's official Linux binary, repack
 # either; the display manager is plasmalogin. The lock screen is themed instead
 # by the colour scheme (which its greeter already follows) plus a wallpaper key,
 # both written by the kde-theme script. See the long note there.
-whitesur-icon-theme	skip	whitesur-icon-theme	skip	vinceliuice's WhiteSur icons, replacing Fluent so the icons and the cursors come from the same family - home/.chezmoiexternal.toml already fetches WhiteSur-cursors. The AUR package IS the official install: its PKGBUILD runs upstream's own install.sh against a pinned release tag. Prefer it over whitesur-icon-theme-git, which rebuilds on every push. NB: the installed directory is "WhiteSur" (upstream's THEME_NAME) - that string, not the package name, is what the KDE theme script writes and what its index.theme guard tests
 # -- hardware ---------------------------------------------------------------
 # NB: intel-media-driver moved to packages/gpu-intel.tsv - it is a GPU fact,
 # and setting LIBVA_DRIVER_NAME=iHD on an AMD card kills VA-API outright.

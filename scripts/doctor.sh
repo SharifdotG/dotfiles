@@ -396,7 +396,7 @@ if command -v kreadconfig6 >/dev/null 2>&1; then
       "$(kreadconfig6 --file kwinrc --group org.kde.kdecoration2 --key library 2>/dev/null)"
   chk "cursor theme"             "WhiteSur-cursors" \
       "$(kreadconfig6 --file kcminputrc --group Mouse --key cursorTheme 2>/dev/null)"
-  chk "icon theme"               "WhiteSur" \
+  chk "icon theme"               "breeze" \
       "$(kreadconfig6 --file kdeglobals --group Icons --key Theme 2>/dev/null)"
   chk "splash theme"             "Catppuccin-Latte-Blue-splash" \
       "$(kreadconfig6 --file ksplashrc --group KSplash --key Theme 2>/dev/null)"
@@ -412,10 +412,35 @@ chk "splash package complete"    yes \
        echo yes || echo no)"
 # Icon themes are keyed off the DIRECTORY name, so a renamed upstream release
 # breaks the theme silently - Plasma falls back per icon rather than erroring.
+# That risk is exactly why the icon theme is Breeze now and not a third-party
+# one: this check should be unfailable, and if it ever fails a KDE base package
+# is missing rather than an AUR theme having renamed itself.
 chk "icon theme on disk"         yes \
-    "$([ -f /usr/share/icons/WhiteSur/index.theme ] ||
-       [ -f "${XDG_DATA_HOME:-$HOME/.local/share}/icons/WhiteSur/index.theme" ] &&
+    "$([ -f /usr/share/icons/breeze/index.theme ] ||
+       [ -f "${XDG_DATA_HOME:-$HOME/.local/share}/icons/breeze/index.theme" ] &&
        echo yes || echo no)"
+
+# The panel launcher's Catppuccin icon. Two separate things can be wrong and
+# only one of them is visible: the FILE can be missing (chezmoi never applied,
+# or the hicolor path changed), or the file can be there and the widget still
+# pointing at the Plasma default because the scripting API call never ran - the
+# script only reaches it inside a live session. Check both.
+_launcher_png="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps/catppuccin-latte.png"
+chk "launcher icon on disk"      yes \
+    "$([ -f "$_launcher_png" ] && echo yes || echo no)"
+# NB: read it out of appletsrc rather than asking plasmashell, so this works on
+# a TTY too - doctor.sh must not need a live session to tell you the truth.
+#
+# NB: matching on the icon NAME rather than walking to the launcher's applet
+# group. The group is [Containments][N][Applets][M][Configuration][General] with
+# both numbers machine-local, and the awk to walk there reliably was longer than
+# the check it guarded. "catppuccin-latte" is written by nothing else in this
+# repo or on this machine, so its presence in appletsrc means the kde-theme
+# script's scripting-API call landed. If you ever use that icon name for a
+# second widget, this check stops being precise - nothing else will notice.
+_appletsrc="${XDG_CONFIG_HOME:-$HOME/.config}/plasma-org.kde.plasma.desktop-appletsrc"
+chk "launcher icon set"          yes \
+    "$(grep -q '^icon=catppuccin-latte$' "$_appletsrc" 2>/dev/null && echo yes || echo no)"
 
 step "Lock screen"
 # The lock screen has two theming surfaces and both are checked, because the
