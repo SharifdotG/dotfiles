@@ -342,7 +342,15 @@ sensors | grep -iE 'fan|tctl'
 
 Loaded is not the same as bound — a module can insert on a board without the chip
 and report nothing at all. `doctor.sh` checks for an actual fan RPM, which is the
-only honest proof.
+only honest proof, and it counts fan lines **inside the `nct6687-` block** of
+`sensors` rather than across the whole output. That scoping is not fussiness:
+amdgpu publishes its own hwmon with a `fan1`, so the unscoped version went green
+off the *GPU* fan on a machine where the board driver was never loaded.
+
+`system/apply.sh` also `modprobe`s the driver directly after installing the
+drop-in. `/etc/modules-load.d` is read once, by `systemd-modules-load.service` at
+boot, and nothing re-reads it — so before that, a correctly configured machine
+still showed no board sensors until its next reboot.
 
 **DKMS caveat:** the driver rebuilds on every kernel update, and when that build
 fails the module is simply absent on the next boot, with no error anywhere you
@@ -365,11 +373,28 @@ you to remember a command per game. Point its default install path at
 
 **The 32-bit halves are the point.** A 64-bit-only install runs Steam fine and
 then renders every 32-bit title on the CPU, because the Vulkan loader substitutes
-`llvmpipe` rather than failing. `doctor.sh` checks that
-`/usr/share/vulkan/icd.d/radeon_icd.i686.json` and the i686 RADV library are both
-present, and that `multilib` is in the **live** repo list — a commented-out
-multilib does not error at bootstrap, the `lib32-*` names are just quietly
-dropped with one warning you will not remember three weeks later.
+`llvmpipe` rather than failing. `doctor.sh` checks that `multilib` is in the
+**live** repo list — a commented-out multilib does not error at bootstrap, the
+`lib32-*` names are just quietly dropped with one warning you will not remember
+three weeks later — and then checks the two things the loader actually consults:
+
+```bash
+cat /usr/share/vulkan/icd.d/radeon_icd.json   # "library_path": "libvulkan_radeon.so"
+ldconfig -p | grep libvulkan_radeon           # ... (libc6) => /usr/lib32/...
+```
+
+There is **one** ICD manifest now, not one per architecture. Mesa 26 ships an
+arch-neutral `radeon_icd.json` whose `library_path` is the bare soname, and the
+32-bit loader resolves it out of `/usr/lib32` itself; `lib32-vulkan-radeon` ships
+the `.so` and no manifest at all. So `library_path` staying **relative** is the
+thing that matters — an absolute `/usr/lib/...` in there would hand a 32-bit
+process the 64-bit driver, failing exactly the silent way this section is about.
+
+Both of these checks were previously written against the old packaging
+(`radeon_icd.i686.json`, and a Debian-style `libc6,x86-32` ldconfig label that
+Arch never prints) and so could not pass on any machine. They reported red on a
+working stack for as long as they existed, which is worse than not checking:
+a permanently-failing check trains you to skim past the one that is real.
 
 Per-game launch options in Steam:
 
@@ -444,9 +469,10 @@ Two extra sections, both gated on `PROFILE=desktop`:
 `pp_od_clk_voltage` present; `lactd` enabled; `nct6687` loaded *and* `sensors`
 reporting a real fan RPM; every NTFS mount actually `rw`.
 
-**Gaming & creative stack** — `multilib` in the live repo list; the 32-bit RADV
-ICD and library present; Steam, Heroic and Kdenlive installed; the gamemode user
-unit present; no Steam library left on an NTFS mount.
+**Gaming & creative stack** — `multilib` in the live repo list; the RADV ICD
+manifest present *with a relative `library_path`*, and the 32-bit RADV library in
+the linker cache; Steam, Heroic and Kdenlive installed; the gamemode user unit
+present; no Steam library left on an NTFS mount.
 
 Plus, on both machines: the **GPU & display stack** section (chezmoi's stored
 `gpu` matching the live PCI read, `LIBVA_DRIVER_NAME` correct for the card,

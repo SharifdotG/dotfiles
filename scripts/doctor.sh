@@ -603,13 +603,32 @@ step "Desktop hardware"
 # silently cannot change the fan curve.
 if [ "$GPU" = amd ]; then
   _ppf=$(cat /sys/module/amdgpu/parameters/ppfeaturemask 2>/dev/null || echo '')
-  chk "amdgpu ppfeaturemask" 0xffffffff \
-      "$(if [ -n "$_ppf" ] && [ "$(printf '%d' "$_ppf" 2>/dev/null || echo 0)" -eq 4294967295 ]
-         then echo 0xffffffff; else echo "${_ppf:-<unreadable>}"; fi)"
+  _ppf_now=$(if [ -n "$_ppf" ] && [ "$(printf '%d' "$_ppf" 2>/dev/null || echo 0)" -eq 4294967295 ]
+             then echo 0xffffffff; else echo "${_ppf:-<unreadable>}"; fi)
+  chk "amdgpu ppfeaturemask" 0xffffffff "$_ppf_now"
+  # NB: 0xfff7bfff is the amdgpu DEFAULT, not a half-applied setting - reading it
+  # back means the modprobe option never reached the module at all. There are
+  # exactly two ways that happens and they need opposite fixes, so say which
+  # rather than leaving a bare red line to be interpreted. `note`, not `chk`:
+  # the pass/fail count above is already correct and must not move.
+  if [ "$_ppf_now" != 0xffffffff ]; then
+    if [ -f /etc/modprobe.d/99-amdgpu-ppfeaturemask.conf ]; then
+      note "  why" "drop-in installed but not live - REBOOT (amdgpu loads from the initramfs)"
+      note "  if still wrong after that" "sudo mkinitcpio -P; check HOOKS in /etc/mkinitcpio.conf has 'modconf'"
+    else
+      note "  why" "/etc/modprobe.d/99-amdgpu-ppfeaturemask.conf absent - run 'sudo ./system/apply.sh'"
+    fi
+  fi
   # The knob LACT actually writes. Present only when the mask above took.
-  chk "GPU power-management sysfs" present \
-      "$(ls /sys/class/drm/card*/device/pp_od_clk_voltage >/dev/null 2>&1 &&
-         echo present || echo MISSING)"
+  _ppsysfs=$(ls /sys/class/drm/card*/device/pp_od_clk_voltage >/dev/null 2>&1 &&
+             echo present || echo MISSING)
+  chk "GPU power-management sysfs" present "$_ppsysfs"
+  # NB: this line is DOWNSTREAM of the one above - with the default mask the
+  # node is simply not created. Two red lines in a row read as two problems;
+  # this is one problem seen twice, and chasing the second one leads nowhere.
+  if [ "$_ppsysfs" != present ] && [ "$_ppf_now" != 0xffffffff ]; then
+    note "  why" "consequence of the mask above, not a second fault"
+  fi
   # NB: capture, then default - do NOT append `|| echo not-found`. For a unit
   # that does not exist, `systemctl is-enabled` PRINTS "not-found" and EXITS 1,
   # so the || branch fires too and chk gets a two-line value it can never
@@ -638,11 +657,33 @@ else
   # report was 1 smaller on a healthy desktop than on a broken one. A
   # denominator that moves with the result is precisely the quiet dishonesty
   # this whole script exists to catch.
-  chk "nct6687 module loaded" yes \
-      "$(lsmod 2>/dev/null | grep -q '^nct6687' && echo yes || echo no)"
-  _fans=$(sensors 2>/dev/null | grep -ciE '^fan[0-9]+:' || true)
+  _nct_loaded=$(lsmod 2>/dev/null | grep -q '^nct6687' && echo yes || echo no)
+  chk "nct6687 module loaded" yes "$_nct_loaded"
+  # NB: same reasoning as the ppfeaturemask note above - "never installed" and
+  # "installed, not rebooted into yet" look identical from lsmod and need
+  # different actions. This one is only an insertion, though, so unlike the mask
+  # it does not need a reboot at all; system/apply.sh now modprobes it directly.
+  if [ "$_nct_loaded" = no ]; then
+    if [ -f /etc/modules-load.d/99-nct6687.conf ]; then
+      note "  why" "drop-in installed, not loaded - 'sudo modprobe nct6687' (or 'dkms status' if that fails)"
+    else
+      note "  why" "/etc/modules-load.d/99-nct6687.conf absent - run 'sudo ./system/apply.sh'"
+    fi
+  fi
+  # NB: scoped to the nct6687 BLOCK of `sensors`, not to the whole output. It
+  # used to be a bare grep over everything, and amdgpu publishes its own hwmon
+  # with a fan1 - so on the desktop this printed a green "board reports fan RPM"
+  # off the GPU fan, one line under a red "nct6687 module loaded: no". A count
+  # that the board driver's absence cannot change is not evidence about the
+  # board driver; it is the same silent substitution this script exists to
+  # catch, committed by the script itself.
+  _fans=$(sensors 2>/dev/null | awk '
+      /^nct6687-/            { inblk = 1; next }
+      /^[[:space:]]*$/       { inblk = 0 }
+      inblk && /^fan[0-9]+:/ { n++ }
+      END { print n + 0 }')
   chk "board reports fan RPM" yes "$([ "${_fans:-0}" -gt 0 ] && echo yes || echo no)"
-  note "  fans seen" "${_fans:-0}"
+  note "  fans seen (nct6687 only)" "${_fans:-0}"
 fi
 # Tctl is the AMD die sensor (k10temp). Fall back to whatever the first
 # reported package/core temperature is, so this is never a blank line.
@@ -676,11 +717,44 @@ chk "multilib enabled" yes \
 
 # The 32-bit half of the Vulkan stack. A 64-bit-only install runs Steam fine
 # and then falls back to llvmpipe for every 32-bit title.
+#
+# NB: both of these were UNPASSABLE, which is why this comment is long. They
+# were written against Mesa packaging that no longer exists and never revisited,
+# so the desktop reported two red lines for a stack that was installed and
+# working:
+#
+#   radeon_icd.i686.json - there is no per-architecture ICD manifest any more.
+#     Mesa 26 ships ONE arch-neutral /usr/share/vulkan/icd.d/radeon_icd.json
+#     whose library_path is the bare soname "libvulkan_radeon.so", and the
+#     32-bit loader resolves that out of /usr/lib32 by itself. The lib32 package
+#     ships the .so and no manifest at all - `pacman -Ql lib32-vulkan-intel` on
+#     the laptop is four files and none of them is JSON. The old filename cannot
+#     exist here no matter what is installed.
+#
+#   libc6,x86-32 - not how this distro's ldconfig labels a 32-bit library. It
+#     prints "(libc6,x86-64)" for 64-bit and a bare "(libc6)" for 32-bit; the
+#     string "libc6,x86-32" appears zero times in the entire cache. That is a
+#     Debian multiarch label and was never going to match on Arch.
+#
+# A check that cannot pass is worse than no check: it teaches you to read its
+# failure as noise, which is exactly what will happen to the REAL llvmpipe
+# fallback when it finally fires. Both now assert something the loader needs.
 if [ "$GPU" = amd ]; then
-  chk "32-bit RADV ICD" present \
-      "$([ -e /usr/share/vulkan/icd.d/radeon_icd.i686.json ] && echo present || echo MISSING)"
+  # The manifest - and specifically that its library_path is RELATIVE. An
+  # absolute /usr/lib/... in there resolves to the 64-bit driver for a 32-bit
+  # process, which fails the way this whole section is about: no error, just
+  # llvmpipe. Globbed, so an older per-arch name still satisfies it.
+  _icd=$(ls /usr/share/vulkan/icd.d/radeon_icd*.json 2>/dev/null | head -1)
+  chk "RADV ICD manifest (arch-neutral)" ok \
+      "$(if [ -z "$_icd" ]; then echo MISSING
+         elif grep -q '"library_path"[[:space:]]*:[[:space:]]*"[^/]*"' "$_icd"; then echo ok
+         else echo absolute-path; fi)"
+  # The 32-bit driver itself, read out of the LINKER CACHE rather than off the
+  # filesystem: the loader dlopen()s the bare soname from the manifest above, so
+  # ld.so's answer is the one that decides whether a 32-bit title gets RADV.
   chk "32-bit RADV library" present \
-      "$(ldconfig -p 2>/dev/null | grep -q 'libvulkan_radeon.so.*libc6,x86-32' &&
+      "$(ldconfig -p 2>/dev/null |
+         grep -q 'libvulkan_radeon\.so (libc6) => /usr/lib32/' &&
          echo present || echo MISSING)"
 fi
 

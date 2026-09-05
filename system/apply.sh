@@ -150,6 +150,25 @@ udevadm control --reload >/dev/null 2>&1 && ok "udev rules reloaded" ||
 systemctl daemon-reload            && ok "systemd reloaded"
 systemctl restart systemd-journald && ok "journald restarted"
 
+# NB: nothing above loads the sensor module. /etc/modules-load.d is read ONCE,
+# by systemd-modules-load.service at boot, and no reload re-reads it - so
+# installing the drop-in a few lines up left nct6687 absent until the next
+# reboot, and doctor.sh reported a red "nct6687 module loaded: no" on a machine
+# that was correctly configured and just had not been restarted.
+#
+# Worth contrasting with ppfeaturemask, which genuinely cannot be fixed here:
+# that is a module PARAMETER for a driver that is already loaded and driving the
+# display, so it waits for the initramfs and a reboot. This one is only an
+# INSERTION, and an insertion can happen now.
+#
+# NB: guarded on the drop-in existing rather than on $PROFILE, so it stays true
+# to what was actually installed above - including the case where the module was
+# not built and the drop-in was deliberately skipped.
+if [ -f /etc/modules-load.d/99-nct6687.conf ] && ! lsmod | grep -q '^nct6687'; then
+  modprobe nct6687 2>/dev/null && ok "nct6687 loaded" ||
+    warn "modprobe nct6687 failed - check 'dkms status' (it may not be built for $(uname -r))"
+fi
+
 # NB: only when a modprobe.d file actually changed. mkinitcpio -P is ~30s and
 # this script's whole contract is that re-running it is cheap and boring.
 if [ "$INITRAMFS_STALE" -eq 1 ]; then
