@@ -397,14 +397,77 @@ fi
 
 info "zram"
 # NB: the zram device comes from a GENERATOR, so daemon-reload re-reads
-# zram-generator.conf but cannot resize a device that is already swapped on -
-# restart then fails with "Device or resource busy". CachyOS starts zram at boot
-# from its own vendor config, so hitting that is the NORMAL path here, not an
-# edge case.
-if swapon --show=NAME --noheadings 2>/dev/null | grep -q zram; then
-  swapoff /dev/zram0 2>/dev/null || true
+# zram-generator.conf but cannot re-compress or resize a device that is already
+# swapped on: the reset returns EBUSY and the restart then dies writing
+# comp_algorithm. CachyOS starts zram at boot from its own vendor config, so a
+# live, in-use zram0 is the NORMAL state here, not an edge case.
+#
+# NB: and on CachyOS the restart is usually POINTLESS, which is the first thing
+# to establish rather than the last. /usr/lib/systemd/zram-generator.conf ships
+# the same four settings this repo does - zstd, size=ram, priority 100, swap - so
+# the live device is already exactly what we are about to ask for. Restarting it
+# can then only fail; it cannot improve anything. Compare first, and do nothing
+# when there is nothing to do.
+#
+# NB: `grep zram >/dev/null`, NEVER `grep -q zram`, in these pipelines. This
+# script runs under `set -o pipefail`, and `grep -q` exits at the first match,
+# which can SIGPIPE `swapon` and make the whole pipeline return 141 - so the test
+# reads FALSE on a machine where zram is plainly active, and the swapoff below
+# is skipped. scripts/doctor.sh documents this exact trap; apply.sh was
+# committing it.
+zram_live_matches() { # zram_live_matches <wanted-algorithm>
+  local cur_alg
+  [ -r /sys/block/zram0/comp_algorithm ] || return 1
+  # The ACTIVE algorithm is the one the kernel puts in [brackets]; the rest of
+  # that file is the list of what is merely available.
+  cur_alg=$(sed -n 's/.*\[\([a-zA-Z0-9-]*\)\].*/\1/p' /sys/block/zram0/comp_algorithm 2>/dev/null)
+  [ "$cur_alg" = "$1" ] || return 1
+  swapon --show=NAME --noheadings 2>/dev/null | grep zram >/dev/null || return 1
+  return 0
+}
+
+_zram_want=$(sed -n 's/^[[:space:]]*compression-algorithm[[:space:]]*=[[:space:]]*//p' \
+             systemd/zram-generator.conf 2>/dev/null | head -1)
+_zram_want="${_zram_want:-zstd}"
+
+if zram_live_matches "$_zram_want"; then
+  ok "zram already matches this config ($_zram_want, $(swapon --show=SIZE --noheadings 2>/dev/null | head -1)) - not restarting"
+else
+  # swapoff genuinely can fail: it has to read every swapped page back into RAM,
+  # so it returns ENOMEM when they no longer fit. Do NOT hide that. The restart
+  # would then be guaranteed to fail with EBUSY, and the old message blamed
+  # `zramctl`, which sends you to look at the wrong thing entirely.
+  if swapon --show=NAME --noheadings 2>/dev/null | grep zram >/dev/null; then
+    if _out=$(swapoff /dev/zram0 2>&1); then
+      ok "zram swap released"
+    else
+      warn "swapoff /dev/zram0 failed: ${_out:-no output}"
+    fi
+  fi
+  if swapon --show=NAME --noheadings 2>/dev/null | grep zram >/dev/null; then
+    # Still in use. Restarting now cannot succeed, and trying leaves a FAILED
+    # unit and possibly a machine with no swap at all - strictly worse than
+    # stopping here. The file on disk is correct either way.
+    warn "zram0 is still in use, so it cannot be reconfigured while running.
+       NOT fatal, and nothing is half-applied: /etc/systemd/zram-generator.conf
+       is written and the new settings take effect at the next boot."
+  else
+    run_step "zram reconfigured" systemctl restart systemd-zram-setup@zram0.service
+    # NB: having taken swap DOWN, confirm it came back. A failed restart here
+    # leaves the machine with no swap, which is the one outcome worse than
+    # never having touched it, and it is silent otherwise.
+    if ! swapon --show=NAME --noheadings 2>/dev/null | grep zram >/dev/null; then
+      FAILED=1
+      warn "zram swap is NOT active after the restart - this machine currently
+       has no swap. Recover with:
+         sudo swapoff /dev/zram0 2>/dev/null; sudo zramctl --reset /dev/zram0
+         sudo systemctl reset-failed systemd-zram-setup@zram0.service
+         sudo systemctl restart systemd-zram-setup@zram0.service
+       A reboot also fixes it - the generator configures the device cleanly at
+       boot, before anything is swapped onto it."
+    fi
+  fi
 fi
-run_step "zram reconfigured" systemctl restart systemd-zram-setup@zram0.service
 # The restart above fires the zram0 `change` event that both 30-zram.rules and
 # our 99- rule react to, so swappiness is settled by the post-check below. If
 # zram did NOT restart, nothing re-evaluated the rules against the live device -

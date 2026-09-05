@@ -61,7 +61,7 @@ find_libsecret() {
 }
 secret_service_up() {
   command -v busctl >/dev/null 2>&1 &&
-    busctl --user list 2>/dev/null | grep -q 'org\.freedesktop\.secrets'
+    busctl --user list 2>/dev/null | grep 'org\.freedesktop\.secrets' >/dev/null
 }
 
 HELPER=""

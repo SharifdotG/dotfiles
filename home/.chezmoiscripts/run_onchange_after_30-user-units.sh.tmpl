@@ -99,6 +99,6 @@ echo "  user-units: systemd --user reloaded"
 # next `doctor.sh` run look like a regression.
 if pgrep -f '/opt/brave.com/brave-origin' >/dev/null 2>&1 &&
    ! systemctl --user show 'browser.slice' -p ActiveState --value 2>/dev/null |
-     grep -q active; then
+     grep active >/dev/null; then
   echo "  user-units: Brave is running - restart it so Slice= binds"
 fi

@@ -243,7 +243,7 @@ _eoargs=$(tr '\0' ' ' < "/proc/${_eopid:-0}/cmdline" 2>/dev/null)
 chk "earlyoom --avoid live"      yes "$(case "$_eoargs" in *--avoid*) echo yes;; *) echo no;; esac)"
 chk "earlyoom protects plasmashell" yes "$(case "$_eoargs" in *plasmashell*) echo yes;; *) echo no;; esac)"
 # NB: zram was only a note before, so a completely dead zram setup passed clean.
-chk "zram is swap"               yes "$(swapon --show=NAME --noheadings 2>/dev/null | grep -q zram && echo yes || echo no)"
+chk "zram is swap"               yes "$(swapon --show=NAME --noheadings 2>/dev/null | grep zram >/dev/null && echo yes || echo no)"
 note "zram" "$(zramctl --noheadings --output NAME,DISKSIZE,DATA,TOTAL 2>/dev/null | tr -s ' ')"
 note "zram ratio" "$(awk '{if($2>0) printf "%.2f:1", $1/$2}' /sys/block/zram0/mm_stat 2>/dev/null)"
 # NB: match only *actual* kills. 'earlyoom.*sending' also matched earlyoom's
@@ -308,7 +308,7 @@ chk "bat config exists"          yes "$([ -f ~/.config/bat/config ] && echo yes 
 # for exactly this reason; a duplicate here means a bare `export PATH=` crept
 # back in.
 chk "no duplicate PATH entries"  ok  "$(zsh -ic 'print -r -- $PATH' 2>/dev/null |
-    tr ':' '\n' | sort | uniq -d | grep -q . && echo "duplicates" || echo ok)"
+    tr ':' '\n' | sort | uniq -d | grep . >/dev/null && echo "duplicates" || echo ok)"
 # Report load and CPU clock alongside: startup time swings 5x between an idle
 # machine (~0.09s) and load>6 with the CPU parked at 800 MHz (~0.45s). Without
 # this context the number looks like a regression when it isn't.
@@ -750,7 +750,7 @@ step "Gaming & creative stack"
 # get dropped by the "not in any repo" filter with one warning, and the failure
 # surfaces weeks later as a game rendering on the CPU.
 chk "multilib enabled" yes \
-    "$(pacman-conf --repo-list 2>/dev/null | grep -qx multilib && echo yes || echo no)"
+    "$(pacman-conf --repo-list 2>/dev/null | grep -x multilib >/dev/null && echo yes || echo no)"
 
 # The 32-bit half of the Vulkan stack. A 64-bit-only install runs Steam fine
 # and then falls back to llvmpipe for every 32-bit title.
@@ -846,7 +846,7 @@ chk "snap-pac installed"         yes "$(pacman -Qq snap-pac >/dev/null 2>&1 && e
 # unlike the snapshot count, /etc/snapper/configs/ is world-readable, so this
 # is a real check rather than a note that gives up without privilege.
 chk "snapper config present"     yes \
-    "$(ls /etc/snapper/configs/ 2>/dev/null | grep -q . && echo yes || echo no)"
+    "$(ls /etc/snapper/configs/ 2>/dev/null | grep . >/dev/null && echo yes || echo no)"
 note "  configs" "$(ls /etc/snapper/configs/ 2>/dev/null | tr '\n' ' ')"
 # The COUNT is the one thing here that genuinely needs privilege: snapper's
 # ALLOW_USERS/ALLOW_GROUPS are empty by default, so a normal user gets "No
