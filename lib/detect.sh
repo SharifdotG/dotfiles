@@ -1,6 +1,46 @@
 # shellcheck shell=bash
 # Sets: DISTRO DISTRO_LIKE DESKTOP SESSION_TYPE IS_VM PKG_COL
-#       PROFILE CPU_VENDOR GPU
+#       PROFILE CPU_VENDOR GPU HW_TUNING
+
+# Normalise a number the KERNEL printed - hex "0x..." or decimal - to decimal.
+#
+# WHY THIS EXISTS, and it is not hypothetical. A module parameter declared
+# `hexint` is printed by sysfs as 0x..., and amdgpu's ppfeaturemask is one.
+# system/apply.sh compared that raw string against the DECIMAL literal
+# 4294967295, which is never equal, so its "is the initramfs stale?" test was
+# permanently true - it regenerated the initramfs on every run and eventually
+# pushed a power-management mask onto the GPU that hung it in a reset loop.
+# scripts/doctor.sh read the SAME file correctly, via printf '%d', so the two
+# halves of this repo disagreed about one fact for as long as nobody compared
+# them. One helper, used by both, is how that stops being possible.
+#
+# Prints a decimal number, always. Returns 1 when the input was not a number, so
+# "the kernel said 0" and "I could not parse that" stay distinguishable.
+#
+# NB: TWO traps here, and the first draft of this function fell into both.
+#
+# 1. `printf '%d' 010` is EIGHT in bash - a leading zero means octal. sysfs is
+#    full of zero-padded values, so the decimal branch forces base 10 with 10#.
+#    (Checking this at a zsh prompt will tell you 10 and be no help at all: zsh's
+#    printf does not do the octal thing. These scripts run under bash.)
+# 2. `printf '%d' garbage || echo 0` prints "0" TWICE - once from printf, which
+#    emits 0 *and* fails, and once from the fallback. That is precisely the
+#    `grep -c` two-line trap scripts/doctor.sh documents and then warns about;
+#    the fix is to validate the string first and only ever call printf on input
+#    already known to be good.
+num() {
+  local v="${1-}"
+  v="${v//[[:space:]]/}"
+  case "$v" in
+    0[xX][0-9a-fA-F]*) printf '%d' "$v"; return 0 ;;
+    [0-9]*)
+      case "$v" in *[!0-9]*) echo 0; return 1 ;; esac
+      printf '%d' "$((10#$v))"; return 0 ;;
+  esac
+  echo 0
+  return 1
+}
+
 detect_all() {
   # shellcheck disable=SC1091
   [ -r /etc/os-release ] && . /etc/os-release
@@ -123,6 +163,33 @@ detect_all() {
   fi
   unset _v _g _gpus
 
+  # ── may this repo change how the KERNEL drives the hardware? ───────────────
+  # Default no, and the default is the whole point.
+  #
+  # WHY. On 2026-09-05 a plain `sudo ./system/apply.sh` wrote
+  # amdgpu.ppfeaturemask=0xffffffff into /etc/modprobe.d, regenerated the
+  # initramfs, and after the next reboot the desktop hung and reset its GPU
+  # every ten seconds - the amdgpu lockup_timeout - until the drop-in was
+  # removed. Nothing about that run looked unusual; the tweak was applied
+  # because the machine was an AMD desktop, which is not consent.
+  #
+  # So: package installs, /etc drop-ins and unit enabling stay unconditional,
+  # because they are recoverable from a TTY. Anything that changes a kernel
+  # module PARAMETER, a power-management mask, or the contents of the initramfs
+  # is gated on this and is OFF unless somebody deliberately turned it on. A
+  # fresh bootstrap of a clean machine must not be able to destabilise hardware.
+  #
+  # Same precedence as PROFILE above: env override, then /etc (readable under
+  # sudo, where ~/.config is not), then the safe default.
+  HW_TUNING="${DOTFILES_HW_TUNING:-}"
+  if [ -z "$HW_TUNING" ] && [ -r /etc/dotfiles-hw-tuning ]; then
+    HW_TUNING=$(tr -d '[:space:]' < /etc/dotfiles-hw-tuning 2>/dev/null)
+  fi
+  case "$HW_TUNING" in
+    on|1|yes|true) HW_TUNING=on ;;
+    *)             HW_TUNING=off ;;
+  esac
+
   export DISTRO DISTRO_LIKE DESKTOP SESSION_TYPE IS_VM PKG_COL \
-         PROFILE CPU_VENDOR GPU
+         PROFILE CPU_VENDOR GPU HW_TUNING
 }

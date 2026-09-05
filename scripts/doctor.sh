@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.."
 . lib/log.sh
 . lib/detect.sh
 . lib/pkg.sh
+. lib/sensors.sh
 detect_all
 
 pass=0; fail=0
@@ -60,7 +61,7 @@ UI_STEPS=14
 [ "$PROFILE" = desktop ] && UI_STEPS=$(( UI_STEPS + 2 ))
 banner "doctor" "read-only health check · reports, never changes anything"
 info "System: $DISTRO / $DESKTOP / $SESSION_TYPE  (vm: $IS_VM, pkg column: $PKG_COL, ${_uarch:-?})"
-info "Machine: profile=$PROFILE / cpu=$CPU_VENDOR / gpu=$GPU"
+info "Machine: profile=$PROFILE / cpu=$CPU_VENDOR / gpu=$GPU / hw-tuning=$HW_TUNING"
 
 step "Platform"
 # NB: a v4 package on a v3 CPU installs cleanly and dies with SIGILL at RUNTIME,
@@ -617,37 +618,58 @@ step "Desktop hardware"
 # the initramfs, and if it did not, LACT opens, shows plausible numbers, and
 # silently cannot change the fan curve.
 if [ "$GPU" = amd ]; then
+  # NB: WHAT THIS ASSERTS CHANGED, 2026-09-05, and the inversion is the point.
+  # It used to assert ppfeaturemask == 0xffffffff, which system/apply.sh wrote
+  # via /etc/modprobe.d. 0xffffffff is not "OverDrive on", it is EVERY PowerPlay
+  # bit on, including PP_GFX_DCS_MASK (0x80000), which the driver leaves off by
+  # default on Polaris. The RX 570 froze for ten seconds, reset, and froze again
+  # in a loop - 10000 ms is amdgpu's default lockup_timeout, so the PERIOD was
+  # the diagnosis. The repo sets nothing now, so there is no repo-side value to
+  # compare against and asserting one would be permanently red by construction.
+  #
+  # What doctor asserts instead is that nothing has put it BACK, from any of the
+  # places it can come from. That is a fact this repo can still be right about.
   _ppf=$(cat /sys/module/amdgpu/parameters/ppfeaturemask 2>/dev/null || echo '')
-  _ppf_now=$(if [ -n "$_ppf" ] && [ "$(printf '%d' "$_ppf" 2>/dev/null || echo 0)" -eq 4294967295 ]
-             then echo 0xffffffff; else echo "${_ppf:-<unreadable>}"; fi)
-  chk "amdgpu ppfeaturemask" 0xffffffff "$_ppf_now"
-  # NB: 0xfff7bfff is the amdgpu DEFAULT, not a half-applied setting - reading it
-  # back means the modprobe option never reached the module at all. There are
-  # exactly two ways that happens and they need opposite fixes, so say which
-  # rather than leaving a bare red line to be interpreted. `note`, not `chk`:
-  # the pass/fail count above is already correct and must not move.
-  if [ "$_ppf_now" != 0xffffffff ]; then
-    if [ -f /etc/modprobe.d/99-amdgpu-ppfeaturemask.conf ]; then
-      note "  why" "drop-in installed but not live - REBOOT (amdgpu loads from the initramfs)"
-      if command -v limine-mkinitcpio >/dev/null 2>&1; then
-        note "  if still wrong after that" "sudo limine-mkinitcpio (or add amdgpu.ppfeaturemask=0xffffffff to /etc/default/limine)"
-      else
-        note "  if still wrong after that" "sudo mkinitcpio -P; check HOOKS in /etc/mkinitcpio.conf has 'modconf'"
-      fi
-    else
-      note "  why" "/etc/modprobe.d/99-amdgpu-ppfeaturemask.conf absent - run 'sudo ./system/apply.sh'"
-    fi
+  note "amdgpu ppfeaturemask" \
+       "${_ppf:-<unreadable - is amdgpu loaded?>} (driver default; this repo sets nothing)"
+  _ppf_src=$(
+    grep -rlsE '^[[:space:]]*options[[:space:]]+amdgpu\b.*ppfeaturemask' \
+      /etc/modprobe.d /run/modprobe.d /usr/lib/modprobe.d 2>/dev/null
+    case " $(cat /proc/cmdline 2>/dev/null) " in
+      *" amdgpu.ppfeaturemask="*) echo /proc/cmdline ;;
+    esac
+  )
+  _ppf_src=$(printf '%s' "$_ppf_src" | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+  chk "no amdgpu ppfeaturemask override" none "${_ppf_src:-none}"
+  # Two ways this goes wrong and they need OPPOSITE fixes, so say which.
+  if [ -n "$_ppf_src" ]; then
+    note "  why" "something is forcing the mask. On Polaris 0xffffffff hangs the GPU."
+    note "  fix" "remove it, then 'sudo ./system/apply.sh' (it regenerates the initramfs), then reboot"
+  elif [ "$(num "${_ppf:-0}")" -eq 4294967295 ]; then
+    # Nothing on disk sets it, yet the kernel has it. There is exactly one way
+    # that happens: the initramfs still carries the drop-in that was deleted
+    # from /etc. amdgpu loads from the initramfs and reads THAT copy.
+    note "  drift" "no config sets this but the live value is 0xffffffff - STALE INITRAMFS"
+    note "  fix" "$(command -v limine-mkinitcpio >/dev/null 2>&1 &&
+                    echo 'sudo limine-mkinitcpio' || echo 'sudo mkinitcpio -P'), then reboot"
   fi
-  # The knob LACT actually writes. Present only when the mask above took.
-  _ppsysfs=$(ls /sys/class/drm/card*/device/pp_od_clk_voltage >/dev/null 2>&1 &&
-             echo present || echo MISSING)
-  chk "GPU power-management sysfs" present "$_ppsysfs"
-  # NB: this line is DOWNSTREAM of the one above - with the default mask the
-  # node is simply not created. Two red lines in a row read as two problems;
-  # this is one problem seen twice, and chasing the second one leads nowhere.
-  if [ "$_ppsysfs" != present ] && [ "$_ppf_now" != 0xffffffff ]; then
-    note "  why" "consequence of the mask above, not a second fault"
-  fi
+  # NB: pwm1, not pp_od_clk_voltage - one `chk` retired, one added, so the
+  # pass/fail denominator does not move (see the note further down about a
+  # denominator that changes with the result).
+  #
+  # pp_od_clk_voltage is the OVERDRIVE interface and exists only when
+  # PP_OVERDRIVE_MASK is set, which this repo deliberately no longer does - so
+  # asserting it would be asserting the bug. pwm1 is the FAN interface, it
+  # exists on stock amdgpu, and it is what LACT actually writes when it applies
+  # a fan curve. It is therefore the honest test of "does lactd still do the
+  # thing it is installed for".
+  _pwm=$(ls /sys/class/drm/card*/device/hwmon/hwmon*/pwm1 >/dev/null 2>&1 &&
+         echo present || echo MISSING)
+  chk "GPU fan control (hwmon pwm1)" present "$_pwm"
+  note "  OverDrive (pp_od_clk_voltage)" \
+    "$(ls /sys/class/drm/card*/device/pp_od_clk_voltage >/dev/null 2>&1 &&
+       echo 'present - something set ppfeaturemask, see above' ||
+       echo 'absent - expected; this repo does not unlock OverDrive')"
   # NB: capture, then default - do NOT append `|| echo not-found`. For a unit
   # that does not exist, `systemctl is-enabled` PRINTS "not-found" and EXITS 1,
   # so the || branch fires too and chk gets a two-line value it can never
@@ -656,25 +678,24 @@ if [ "$GPU" = amd ]; then
   chk "lactd enabled" enabled "${_lactd:-not-found}"
 fi
 
-# NB: gated on the driver being INSTALLED at all, mirroring the same guard in
-# system/apply.sh. MSI B450 boards (like B450M Mortar MAX) use Nuvoton NCT6797D
-# handled by the in-tree `nct6775` driver; MSI B550 boards use NCT6687D handled
-# by the out-of-tree `nct6687` driver.
-_board_name=$(cat /sys/devices/virtual/dmi/id/board_name 2>/dev/null || true)
-if [[ "$_board_name" =~ [bB]450 ]] || lsmod 2>/dev/null | grep '^nct6775' >/dev/null; then
-  _sens_mod=nct6775
-  _sens_re='^nct(6775|679[0-9])-'
-else
-  _sens_mod=nct6687
-  _sens_re='^nct6687-'
-fi
+# NB: no board_name regex here any more, and no `lsmod`.
+#
+# This used to mirror a guess in system/apply.sh - `[[ $board_name =~ [bB]450 ]]`
+# picks nct6775, everything else is declared nct6687 - except that this copy had
+# an extra `|| lsmod | grep '^nct6775'` disjunct the other one did not, so the
+# two files could reach DIFFERENT answers on the same machine while a comment
+# right here claimed they mirrored each other. Both now ask lib/sensors.sh the
+# same question, and the question is "which driver is BOUND", which lsmod cannot
+# answer: a module can insert and bind nothing at all.
+_sens_mod=$(board_sensor_bound 2>/dev/null || true)
 
-if ! { modinfo "$_sens_mod" >/dev/null 2>&1 ||
-       [ -n "$(find /lib/modules -name "${_sens_mod}.ko*" -print -quit 2>/dev/null)" ]; }; then
-  note "$_sens_mod" "<driver not installed - no board-sensor support on this machine>"
+if [ -z "$_sens_mod" ] &&
+   ! { board_sensor_available nct6775 || board_sensor_available nct6687; }; then
+  note "board sensors" \
+       "<no nct6775/nct6687 driver installed for $(uname -r) - no board-sensor support>"
 else
   # NB: loaded is NOT the same as bound. The driver inserts and then reports
-  # sensors if hardware was found. A fan RPM is the only honest proof.
+  # sensors only if hardware was found. A fan RPM is the only honest proof.
   #
   # NB: `chk` on BOTH outcomes, never `ok` on the success path. `ok` prints a
   # green line but increments nothing, so this check used to enter the
@@ -682,33 +703,24 @@ else
   # report was 1 smaller on a healthy desktop than on a broken one. A
   # denominator that moves with the result is precisely the quiet dishonesty
   # this whole script exists to catch.
-  _nct_loaded=$(lsmod 2>/dev/null | grep "^$_sens_mod" >/dev/null && echo yes || echo no)
-  chk "$_sens_mod module loaded" yes "$_nct_loaded"
-  # NB: same reasoning as the ppfeaturemask note above - "never installed" and
-  # "installed, not rebooted into yet" look identical from lsmod and need
-  # different actions. This one is only an insertion, though, so unlike the mask
-  # it does not need a reboot at all; system/apply.sh now modprobes it directly.
-  if [ "$_nct_loaded" = no ]; then
-    if [ -f "/etc/modules-load.d/99-$_sens_mod.conf" ] || [ -f /etc/modules-load.d/99-nct6687.conf ]; then
-      note "  why" "drop-in installed, not loaded - 'sudo modprobe $_sens_mod' (or 'dkms status' if that fails)"
-    else
-      note "  why" "/etc/modules-load.d/99-$_sens_mod.conf absent - run 'sudo ./system/apply.sh'"
-    fi
+  chk "board sensor driver bound" yes "$([ -n "$_sens_mod" ] && echo yes || echo no)"
+  if [ -n "$_sens_mod" ]; then
+    note "  driver" "$_sens_mod"
+  elif [ -f /etc/modules-load.d/99-nct6775.conf ] || [ -f /etc/modules-load.d/99-nct6687.conf ]; then
+    note "  why" "a drop-in is installed but nothing bound - 'sudo modprobe nct6775', or 'dkms status' for nct6687"
+  else
+    note "  why" "system/apply.sh probes for the chip and installs nothing when none binds.
+                  If this board does have a Nuvoton chip: 'dmesg | grep -i nct' -
+                  the usual answer is 'bound by ACPI', which needs
+                  acpi_enforce_resources=lax on the kernel command line (not set by this repo)."
   fi
-  # NB: scoped to the board-sensor BLOCK of `sensors`, not to the whole output. It
-  # used to be a bare grep over everything, and amdgpu publishes its own hwmon
-  # with a fan1 - so on the desktop this printed a green "board reports fan RPM"
-  # off the GPU fan, one line under a red module loaded: no. A count
-  # that the board driver's absence cannot change is not evidence about the
-  # board driver; it is the same silent substitution this script exists to
-  # catch, committed by the script itself.
-  _fans=$(sensors 2>/dev/null | awk -v pat="$_sens_re" '
-      $0 ~ pat               { inblk = 1; next }
-      /^[[:space:]]*$/       { inblk = 0 }
-      inblk && /^fan[0-9]+:/ { n++ }
-      END { print n + 0 }')
+  # NB: counted from hwmon sysfs, scoped to the board driver's own device - see
+  # board_sensor_fan_count in lib/sensors.sh for why it is not a `sensors` text
+  # scrape any more (the block is headed by the CHIP name, nct6797, while the
+  # module is nct6775) and for why amdgpu's own fan1 must stay out of the count.
+  _fans=$(board_sensor_fan_count)
   chk "board reports fan RPM" yes "$([ "${_fans:-0}" -gt 0 ] && echo yes || echo no)"
-  note "  fans seen ($_sens_mod only)" "${_fans:-0}"
+  note "  fans seen (board driver only)" "${_fans:-0}${_sens_mod:+ - chip $(board_sensor_chip 2>/dev/null || echo '?')}"
 fi
 # Tctl is the AMD die sensor (k10temp). Fall back to whatever the first
 # reported package/core temperature is, so this is never a blank line.

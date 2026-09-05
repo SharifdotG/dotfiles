@@ -67,12 +67,20 @@ you are *not* sitting at can be reviewed from the one you are:
 DOTFILES_PROFILE=desktop DOTFILES_CPU_VENDOR=amd DOTFILES_GPU=amd ./bootstrap.sh --dry-run
 ```
 
+There is a fourth switch that is not an axis: **`DOTFILES_HW_TUNING`** (or one word
+in `/etc/dotfiles-hw-tuning`), **off by default**. Kernel- and module-level tweaks —
+anything written into `/etc/modprobe.d`, anything that changes the initramfs — are
+opt-in, so a plain bootstrap of a clean machine cannot change how the kernel drives
+the hardware. It exists because one such tweak (`amdgpu.ppfeaturemask=0xffffffff`)
+put the desktop into a GPU reset loop that survived reboots; see
+[docs/DESKTOP.md](docs/DESKTOP.md). Removal of a tweak is never gated.
+
 What each axis selects:
 
 | Axis | Packages | Config |
 |---|---|---|
 | `CPU_VENDOR` | `packages/cpu-{intel,amd}.tsv` | `thermald` enabled only on Intel |
-| `GPU` | `packages/gpu-{intel,amd}.tsv` | `LIBVA_DRIVER_NAME`; `amdgpu.ppfeaturemask`; `lactd` |
+| `GPU` | `packages/gpu-{intel,amd}.tsv` | `LIBVA_DRIVER_NAME`; `lactd` (fan control only) |
 | `PROFILE` | `packages/{gaming,creative}.tsv` on desktop | scroll step, MangoHud, gamemode |
 
 Everything else — `core`, `dev`, `reliability`, `desktop` (which means the graphical

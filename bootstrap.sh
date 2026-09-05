@@ -163,8 +163,34 @@ if [ "$NO_PKGS" -eq 0 ]; then
     # output was already being discarded, which is exactly the shape spin() is
     # safe for. The comm itself is unchanged.
     _pkgdb=$(mktemp)
+    # NB: `set -o pipefail` INSIDE the bash -c, and the emptiness check below.
+    # Neither is belt-and-braces; without them this block had a failure mode
+    # that turned a package install into something else entirely.
+    #
+    # The pipeline's exit status is `sort`'s, and sort succeeds on empty input.
+    # So if `pacman -Slq` failed - no network on a fresh install, an unsynced
+    # database, a mirror 404 - the whole thing still returned 0, spin() printed
+    # a green tick, and $_pkgdb was EMPTY. `comm -23` against an empty file
+    # classifies every manifest name as missing, so PKGS was emptied, and the
+    # install a few lines down became:
+    #
+    #     sudo pacman -Syu --needed --noconfirm        # <- with no packages
+    #
+    # which is a silent unattended full-system upgrade instead of the install
+    # that was asked for. On a machine being set up for the first time that is
+    # about the worst possible substitution, and nothing in the output said so.
     spin "reading the package databases" \
-      bash -c '{ pacman -Slq; pacman -Sgq; } 2>/dev/null | sort -u > "$1"' _ "$_pkgdb"
+      bash -c 'set -o pipefail; { pacman -Slq; pacman -Sgq; } | sort -u > "$1"' _ "$_pkgdb" ||
+      die "could not read the pacman databases - see the output above.
+       This usually means no network, or a database that has never been synced.
+       Fix that first: 'sudo pacman -Sy'. Refusing to continue, because an empty
+       database makes every manifest name look missing and turns the install
+       below into a bare full-system upgrade."
+    if [ ! -s "$_pkgdb" ]; then
+      rm -f "$_pkgdb"
+      die "the pacman database listing came back empty, which cannot be true on
+       a working system. Refusing to continue - see the note above this check."
+    fi
     mapfile -t MISSING < <(comm -23 \
       <(printf '%s\n' "${PKGS[@]}" | sort -u) \
       "$_pkgdb")
@@ -175,6 +201,14 @@ if [ "$NO_PKGS" -eq 0 ]; then
       mapfile -t PKGS < <(comm -23 \
         <(printf '%s\n' "${PKGS[@]}" | sort -u) \
         <(printf '%s\n' "${MISSING[@]}" | sort -u))
+    fi
+    # NB: and if the subtraction above emptied PKGS, stop. `pacman -Syu` with no
+    # arguments is a valid command that does something quite different from what
+    # this function is for, and reaching it by accident is the bug described
+    # above arriving by a second route.
+    if [ "${#PKGS[@]}" -eq 0 ]; then
+      die "every manifest name was filtered out as missing - refusing to run
+       'pacman -Syu' with no packages. Check packages/*.tsv and the repo config."
     fi
   fi
 

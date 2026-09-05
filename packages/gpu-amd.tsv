@@ -17,4 +17,4 @@ lib32-mesa	lib32-mesa	skip	skip	32-bit OpenGL. Same reasoning as above
 vulkan-mesa-layers	vulkan-mesa-layers	skip	skip	device-select and overlay layers Mesa ships separately
 lib32-vulkan-mesa-layers	lib32-vulkan-mesa-layers	skip	skip	the 32-bit half
 radeontop	radeontop	skip	skip	live GPU utilisation; the amdgpu answer to intel_gpu_top
-lact	lact	skip	skip	Linux AMDGPU Controller: fan curve, power limit, clocks. Polaris is supported. Needs amdgpu.ppfeaturemask=0xffffffff, which system/apply.sh sets via modprobe.d rather than the bootloader
+lact	lact	skip	skip	Linux AMDGPU Controller: fan curve, power limit, clocks. Polaris is supported. Fan curve and power limit work on STOCK amdgpu - they go through the hwmon pwm1 node and need nothing unlocked. This repo deliberately does NOT set ppfeaturemask: 0xffffffff also forces PP_GFX_DCS_MASK on, which hung the RX 570 in a GPU reset loop (2026-09-05). OverDrive clock/voltage editing is given up on purpose - see docs/DESKTOP.md

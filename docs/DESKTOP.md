@@ -61,7 +61,7 @@ Press **Delete** at the MSI splash.
 - **Settings → Advanced → Wake Up Event Setup**: turn off Wake from USB unless you
   want the machine waking on a mouse nudge.
 - **Secure Boot → Disabled.** Consistent with the laptop; `fwupd` and DKMS both
-  prefer it, and `nct6687d` is DKMS.
+  prefer it, and `nct6687d` (the B550 board-sensor driver) is DKMS.
 - Note the BIOS version. B450 boards needed a BIOS update to boot Zen 2 at all, so
   if the board has been running the 3600 it is already new enough.
 
@@ -136,10 +136,15 @@ sudo usermod -aG docker "$USER"
 ./scripts/doctor.sh
 ```
 
-**Reboot after `system/apply.sh`.** It installs
-`/etc/modprobe.d/99-amdgpu-ppfeaturemask.conf` and regenerates the initramfs, and
-amdgpu only picks the option up on the next boot. The script says so, and
-`doctor.sh` will show the old value until you do.
+**No reboot needed after `system/apply.sh`** on a fresh machine. It installs no
+`/etc/modprobe.d` file and does not touch the initramfs, and the board sensor
+driver is loaded during the run rather than waiting for the next boot.
+
+The one exception is a machine that still carries the old
+`/etc/modprobe.d/99-amdgpu-ppfeaturemask.conf`: `apply.sh` removes it, regenerates
+the initramfs, and **that** needs a reboot to take effect. It says so when it
+happens. See [Fan curve and power limit](#fan-curve-and-power-limit-lact) for why
+that file is gone.
 
 ---
 
@@ -303,25 +308,65 @@ without anything noticing — this is the house rule applied to the split itself
 
 ### Fan curve and power limit (LACT)
 
-`system/apply.sh` writes `/etc/modprobe.d/99-amdgpu-ppfeaturemask.conf`, which
-unlocks amdgpu's power-management interface. **A modprobe.d option, not a kernel
-command-line parameter** — every guide reaches for the bootloader, but that means
-editing machine-local files that differ between GRUB and systemd-boot. amdgpu
-loads from the initramfs and mkinitcpio's `modconf` hook copies
-`/etc/modprobe.d/*.conf` in, so this reaches the module the same way and works
-under either bootloader.
-
-After the reboot:
+**This repo does not set `amdgpu.ppfeaturemask`, and the absence is deliberate.**
+LACT still drives the fan curve and the power limit: those go through the standard
+hwmon `pwm1` node, which exists on stock amdgpu and needs nothing unlocked. What
+is given up — knowingly — is OverDrive clock/voltage editing.
 
 ```bash
-cat /sys/module/amdgpu/parameters/ppfeaturemask     # 0xffffffff
-ls /sys/class/drm/card*/device/pp_od_clk_voltage    # must exist
+ls /sys/class/drm/card*/device/hwmon/hwmon*/pwm1   # fan control, must exist
 systemctl status lactd
+cat /sys/module/amdgpu/parameters/ppfeaturemask    # whatever the driver chose
 ```
 
-If the mask still reads its old value, `/etc/modprobe.d` never reached the
-initramfs: check that `HOOKS` in `/etc/mkinitcpio.conf` contains `modconf`, or
-fall back to `amdgpu.ppfeaturemask=0xffffffff` on the kernel command line.
+#### Why it was removed — 2026-09-05
+
+`apply.sh` used to install `/etc/modprobe.d/99-amdgpu-ppfeaturemask.conf` with
+`options amdgpu ppfeaturemask=0xffffffff`. After a bootstrap that finally pushed
+it into the initramfs, the desktop froze for ~10 seconds, recovered, and froze
+again, on every boot. **10000 ms is amdgpu's default `lockup_timeout`**, so the
+period *was* the diagnosis: the GPU was hanging, being reset, and hanging again.
+
+`0xffffffff` is not "OverDrive on". It forces every PowerPlay bit on, and the
+Polaris default `0xfff7bfff` differs from it by exactly two:
+
+| bit | name | wanted? |
+|---|---|---|
+| `0x4000` | `PP_OVERDRIVE_MASK` | yes — this is the one LACT needs |
+| `0x80000` | `PP_GFX_DCS_MASK` | **no** — off by default on gfx803 |
+
+The removed file argued *"there is no benefit to being surgical here on a card you
+own"*. The benefit is that the driver's defaults encode which bits are safe on
+which silicon, and `0xffffffff` discards that wholesale. The value one would
+actually want is `0xfff7ffff` (default `|` `PP_OVERDRIVE_MASK`) — **not**
+`0xffffffff`, and not the `0xfffd7fff` the wiki quotes, which also clears GFXOFF
+and stutter mode.
+
+Two things make it inert until suddenly it is not, and both are worth knowing:
+amdgpu loads from the **initramfs**, so a `modprobe.d` option does nothing until
+the image is rebuilt; and under Limine, `mkinitcpio -P` rebuilds the image while
+`limine-mkinitcpio` is what makes the bootloader actually *consume* it. The bad
+mask sat harmless for a while for exactly that reason, then went off.
+
+If you ever want it back it is now gated behind `DOTFILES_HW_TUNING` — see
+[Kernel-level tweaks are opt-in](#kernel-level-tweaks-are-opt-in).
+
+#### Kernel-level tweaks are opt-in
+
+Everything else this repo writes is a config file: get it wrong and you fix it by
+editing a file. A module parameter is different in kind — the kernel applies it at
+boot, before anything you would use to fix it exists. So `system/apply.sh` refuses
+to write into `/etc/modprobe.d` unless you say so explicitly:
+
+```bash
+echo on | sudo tee /etc/dotfiles-hw-tuning     # persistent
+sudo DOTFILES_HW_TUNING=on ./system/apply.sh   # or per-run
+```
+
+Off by default, and the default is the point: a plain `./bootstrap.sh &&
+sudo ./system/apply.sh` on a clean machine cannot change how the kernel drives the
+hardware. **Removal is never gated** — a guard that can block un-breaking a machine
+is worse than no guard.
 
 **LACT owns the GPU; gamemode owns the CPU.** `home/private_dot_config/gamemode.ini`
 sets `apply_gpu_optimisations=0` on purpose. gamemode can drive the same sysfs
@@ -331,11 +376,25 @@ names: last writer wins, the fan curve silently reverts, nothing errors.
 
 ### Board sensors
 
-MSI B450 boards (such as B450M Mortar MAX) use a Nuvoton NCT6797D Super-I/O
-chip supported by the kernel's in-tree `nct6775` driver. MSI B550 boards use an
-NCT6687D chip, which requires the out-of-tree `nct6687` driver (`nct6687d-dkms-git`).
-`system/apply.sh` detects the board and installs the corresponding drop-in
-in `/etc/modules-load.d/` (`99-nct6775.conf` or `99-nct6687.conf`).
+Two drivers are candidates: the kernel's in-tree `nct6775`, and the out-of-tree
+`nct6687` (`nct6687d-dkms-git`) for NCT6687D chips.
+
+**`system/apply.sh` probes; it does not guess.** It loads a candidate, checks
+whether a hwmon device actually appeared, and unloads again if not — installing a
+`/etc/modules-load.d/` drop-in only for a driver that genuinely bound on *this*
+machine, and installing **nothing** when neither does.
+
+That replaces a regex on the DMI board name (`[bB]450` → `nct6775`, everything
+else → `nct6687`). A board name is a marketing string and the Super-I/O chip is
+the fact; the two are only correlated, and MSI ships revisions. Worse, the `else`
+was not a fallback but an assertion — every board that did not match, *including
+one where `board_name` could not be read at all*, was declared NCT6687D. Loading
+a Super-I/O driver for a chip that is not there is not free: the driver and the
+ACPI EC can contend for the same index/data ports.
+
+```bash
+sensors | grep -iE 'fan|tctl'
+```
 
 ```bash
 sensors | grep -iE 'fan|tctl'
@@ -343,15 +402,22 @@ sensors | grep -iE 'fan|tctl'
 
 Loaded is not the same as bound — a module can insert on a board without the chip
 and report nothing at all. `doctor.sh` checks for an actual fan RPM, which is the
-only honest proof, and it counts fan lines **inside the board-sensor block** of
-`sensors` rather than across the whole output. That scoping is not fussiness:
+only honest proof, and it counts fan inputs **on the board driver's own hwmon
+device** rather than across all of `sensors`. That scoping is not fussiness:
 amdgpu publishes its own hwmon with a `fan1`, so the unscoped version went green
 off the *GPU* fan on a machine where the board driver was never loaded.
 
-`system/apply.sh` also `modprobe`s the driver directly after installing the
-drop-in. `/etc/modules-load.d` is read once, by `systemd-modules-load.service` at
-boot, and nothing re-reads it — so before that, a correctly configured machine
-still showed no board sensors until its next reboot.
+The load happens during the run, not at the next boot: `/etc/modules-load.d` is
+read once, by `systemd-modules-load.service` at boot, and nothing re-reads it — so
+otherwise a correctly configured machine shows no board sensors until it restarts.
+The probe gets this for free, since it has to insert the module to find out
+whether it binds.
+
+**If nothing binds but the board does have a Nuvoton chip**, look at
+`dmesg | grep -i nct`. The usual answer is `Sensor is bound by ACPI`, which needs
+`acpi_enforce_resources=lax` on the kernel command line. This repo does not set
+kernel command-line parameters — that is exactly the class of change
+`DOTFILES_HW_TUNING` exists to hold back — so that one is yours to make by hand.
 
 **DKMS caveat (for B550 / nct6687):** the out-of-tree driver rebuilds on every kernel update,
 and when that build fails the module is simply absent on the next boot, with no error
@@ -466,9 +532,11 @@ and GIMP are all in `extra` and native if a local editor is wanted.
 
 Two extra sections, both gated on `PROFILE=desktop`:
 
-**Desktop hardware** — `amdgpu` `ppfeaturemask` read from `/sys/module/`;
-`pp_od_clk_voltage` present; `lactd` enabled; `nct6687` loaded *and* `sensors`
-reporting a real fan RPM; every NTFS mount actually `rw`.
+**Desktop hardware** — that **nothing** is forcing `amdgpu.ppfeaturemask`, from any
+of the four places one can come from (`/etc`, `/run`, `/usr/lib/modprobe.d`,
+`/proc/cmdline`); GPU fan control (`pwm1`) present; `lactd` enabled; a board sensor
+driver actually **bound** — not merely loaded — *and* a real fan RPM on its own
+hwmon; every NTFS mount actually `rw`.
 
 **Gaming & creative stack** — `multilib` in the live repo list; the RADV ICD
 manifest present *with a relative `library_path`*, and the 32-bit RADV library in

@@ -5,6 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 . ../lib/log.sh
 . ../lib/detect.sh
+. ../lib/sensors.sh
 detect_all
 
 # NB: no UI_STEPS here. This script's two `step` calls are inside
@@ -32,6 +33,16 @@ info "profile=$PROFILE / cpu=$CPU_VENDOR / gpu=$GPU"
 # make the idempotent re-run - the normal update path - feel broken.
 CHANGED=0
 
+# Set by any step that failed in a way this run must not swallow. Checked once,
+# at the very end, so the failure is loud AND the rest of the run still happens -
+# a boot-path failure should not also cost you the twelve drop-ins after it.
+#
+# NB: scoped deliberately. Only the initramfs step sets this, because that is
+# the only remaining step whose failure can leave the machine booting something
+# other than what this script just configured. The udev and zram warnings are
+# recoverable and stay warnings; that is a decision, not an oversight.
+FAILED=0
+
 install_file() {
   local src="$1" dst="$2" mode="${3:-0644}"
   if [ -f "$dst" ] && cmp -s "$src" "$dst"; then
@@ -43,20 +54,117 @@ install_file() {
     step "would create $dst"
   fi
   if [ "$DRY" -eq 1 ]; then return; fi
-  install -D -m "$mode" "$src" "$dst"
+  # NB: `die` on failure, not a bare `install`. Under `set -e` a failed install
+  # aborts the whole run printing NOTHING - no warn, no error, no steps_end -
+  # after an arbitrary number of earlier drop-ins have already been written.
+  # A half-applied /etc that exits 1 in silence is the worst of both outcomes.
+  local _out
+  _out=$(install -D -m "$mode" "$src" "$dst" 2>&1) ||
+    die "could not write $dst: ${_out:-no output from install}"
   CHANGED=1
   ok "wrote      $dst"
 }
 
-# NB: `return 0` unconditionally. This script runs under `set -e` - unlike every
-# other script in this repo - so a `cmd && ok || warn` chain whose final branch
-# is false aborts the run. Containing the pattern inside a function that always
-# succeeds is what keeps that from happening.
+# THE ONLY route into /etc/modprobe.d. Anything that reaches the kernel as a
+# module parameter goes through here, and here refuses unless HW_TUNING is on.
+#
+# NB: THIS HAS NO CALLER TODAY, and that is not dead code to be tidied away - it
+# is a tripwire. `system/modprobe.d/` is empty on purpose (see the note further
+# down about ppfeaturemask). The next person who wants to set a module parameter
+# will look for the way to do it, find this, and have to make the decision
+# deliberately instead of adding one more `install_file` line that looks exactly
+# like the twelve harmless ones above it. That was how the GPU broke: the
+# dangerous change was indistinguishable from the safe ones at the call site.
+install_modprobe_file() { # install_modprobe_file <src> <dst>
+  if [ "$HW_TUNING" != on ]; then
+    info "skipping $2 - kernel/module tweaks are opt-in and OFF by default.
+       Enable with: echo on | sudo tee /etc/dotfiles-hw-tuning
+       Read docs/DESKTOP.md first - this is the mechanism that hung the GPU."
+    return 0
+  fi
+  install_file "$1" "$2"
+  # A module parameter only reaches a driver that loads from the initramfs once
+  # the initramfs has been rebuilt. Setting this is not optional.
+  INITRAMFS_STALE=1
+  return 0
+}
+
+# Take a file this repo used to own back OFF the machine.
+#
+# NB: this is not symmetry for its own sake. Dropping a file from the repo stops
+# it being INSTALLED; it does nothing about the machines that already have it,
+# and pacman does not own /etc drop-ins either - so without this, a setting this
+# repo has disowned outlives the decision to disown it, forever, on exactly the
+# machines that were kept up to date.
+#
+# NB: removal is never gated on HW_TUNING. A gate that can block un-breaking a
+# machine is worse than no gate.
+remove_file() { # remove_file <path> [why]
+  if [ ! -e "$1" ]; then return 0; fi
+  step "would remove $1"
+  if [ -n "${2:-}" ]; then info "  $2"; fi
+  if [ "$DRY" -eq 1 ]; then return 0; fi
+  rm -f "$1"
+  # A modprobe.d file is COPIED INTO the initramfs by mkinitcpio's modconf hook,
+  # so deleting it from /etc is only half the removal - see the initramfs block.
+  case "$1" in /etc/modprobe.d/*) INITRAMFS_STALE=1 ;; esac
+  ok "removed    $1"
+  return 0
+}
+
+# NB: `return 0` unconditionally, and this is the ONE place in this file where
+# that guard is actually load-bearing.
+#
+# CORRECTION, 2026-09-05. The note that used to be here said a bare
+# `cmd && ok || warn` at the TOP LEVEL aborts the run under `set -e`. It does
+# not, and three comments in this file repeated the claim. `set -e` is suspended
+# for every command of an && / || list except the last, and a list whose first
+# member fails is not a trigger at all:
+#
+#     bash -c 'set -e; [ x = y ] && X=1; echo survived'   -> survived
+#
+# What IS fatal is a FUNCTION whose last command evaluates false - the function
+# returns non-zero, and a bare call to it at the top level is then an unhandled
+# failure:
+#
+#     bash -c 'set -e; f(){ [ a = b ] && echo hi; }; f; echo after'   -> (exits)
+#
+# That is exactly this function's shape, so `return 0` stays. Do not "tidy" the
+# `if` statements elsewhere in this file back into && chains on the strength of
+# the old comment - they are fine either way, but the reasoning was wrong.
+# Run a command; if it fails, say so WITH the reason it gave.
+#
+# NB: this replaces `cmd >/dev/null 2>&1 && ok "..." || warn "..."`, which this
+# file used six times. That shape throws away stderr - the only place the
+# command explains itself - and three of the six had no failure branch at all,
+# so a failed `sysctl --system` or `daemon-reload` printed absolutely nothing
+# and left a missing line in a report nobody reads line by line. Worse, the
+# swappiness post-check further down would then blame the udev rule for a value
+# that is wrong because the reload never happened.
+run_step() {
+  local label="$1"; shift
+  local _out
+  if _out=$("$@" 2>&1); then
+    ok "$label"
+  else
+    warn "$label FAILED: ${_out:-no output}"
+  fi
+  return 0
+}
+
 enable_unit() {
+  local _out
   if systemctl is-enabled --quiet "$1" 2>/dev/null; then
     ok "already enabled $1"
   else
-    systemctl enable --now "$1" >/dev/null 2>&1 && ok "enabled $1" || warn "could not enable $1"
+    # NB: keep stderr. "Unit not found", "unit is masked" and "enabled, but
+    # failed to start" need three different actions from you and used to print
+    # one indistinguishable line.
+    if _out=$(systemctl enable --now "$1" 2>&1); then
+      ok "enabled $1"
+    else
+      warn "could not enable $1: ${_out:-no output}"
+    fi
   fi
   return 0
 }
@@ -85,98 +193,176 @@ info "Docker daemon (log caps + builder GC)"
 install_file docker/daemon.json                           /etc/docker/daemon.json
 
 # ── hardware-specific ────────────────────────────────────────────────────────
-# NB: keyed on the hardware axes, not on PROFILE alone. ppfeaturemask is an
-# amdgpu fact - it would be inert on an Intel GPU and actively confusing to
-# find in /etc. The sensor module is a desktop-board fact.
-INITRAMFS_STALE=0
-if [ "$GPU" = amd ]; then
-  info "AMD GPU (unlock power management for LACT)"
-  CHANGED=0
-  install_file modprobe.d/99-amdgpu-ppfeaturemask.conf \
-               /etc/modprobe.d/99-amdgpu-ppfeaturemask.conf
-  # `if`, not `[ ... ] && ...`. Same reason as the note further down: this
-  # script runs under `set -e` and a bare test-and-command is exactly the shape
-  # that has bitten it before.
-  _ppf_now=$(cat /sys/module/amdgpu/parameters/ppfeaturemask 2>/dev/null || echo '')
-  if [ "$CHANGED" -eq 1 ] || [ "${_ppf_now:-0}" != 4294967295 ]; then
-    INITRAMFS_STALE=1
-  fi
-fi
-# NB: gated on PROFILE **and** on the module actually existing.
-# MSI B450 boards (like B450M Mortar MAX) use Nuvoton NCT6797D handled by the
-# in-tree nct6775 driver. MSI B550 boards use NCT6687D handled by nct6687 (DKMS).
-_board_name=$(cat /sys/devices/virtual/dmi/id/board_name 2>/dev/null || true)
-if [[ "$_board_name" =~ [bB]450 ]]; then
-  BOARD_SENSOR_MOD=nct6775
-else
-  BOARD_SENSOR_MOD=nct6687
-fi
+# NB: keyed on the hardware axes, not on PROFILE alone. The sensor chip is a
+# desktop-board fact.
+#
+# WHAT USED TO BE HERE, AND WHY IT IS GONE. This block also wrote
+# /etc/modprobe.d/99-amdgpu-ppfeaturemask.conf - `options amdgpu
+# ppfeaturemask=0xffffffff` - to unlock the power-management interface for LACT.
+# On 2026-09-05 that value finally reached the initramfs, and from the next boot
+# the desktop hung and reset its GPU every ten seconds: amdgpu's default
+# lockup_timeout, in a loop, on every boot, because the drop-in is baked into
+# the initramfs and so survives a restart.
+#
+# 0xffffffff is not "the default plus OverDrive". It forces EVERY PowerPlay bit
+# on, including PP_GFX_DCS_MASK (0x80000), which the driver deliberately leaves
+# off by default on Polaris. The removed file argued "there is no benefit to
+# being surgical here on a card you own"; the benefit is that the driver's
+# defaults encode which bits are safe on which silicon, and overriding all of
+# them discards that knowledge wholesale.
+#
+# Nothing is lost that this repo needs: LACT's fan curve goes through the
+# standard hwmon interface and works on the stock mask. Only OverDrive
+# clock/voltage tuning needs the bit, and that is not worth a GPU reset loop.
+#
+# If it is ever wanted back, all three of these are required and none is
+# optional: gate it on HW_TUNING (see lib/detect.sh), set the driver default
+# plus PP_OVERDRIVE_MASK (0xfff7ffff) rather than every bit, and regenerate the
+# initramfs - amdgpu loads from there, so a modprobe.d option is inert until it
+# does, which is exactly why this was silently dormant for so long before it
+# went off.
 
-have_board_sensors() {
-  modinfo "$BOARD_SENSOR_MOD" >/dev/null 2>&1 && return 0
-  [ -n "$(find /lib/modules -name "${BOARD_SENSOR_MOD}.ko*" -print -quit 2>/dev/null)" ]
-}
-if [ "$PROFILE" = desktop ]; then
-  if have_board_sensors; then
-    info "Board sensors (Nuvoton $BOARD_SENSOR_MOD for ${_board_name:-desktop})"
-    if [ "$BOARD_SENSOR_MOD" = nct6775 ] && [ -f /etc/modules-load.d/99-nct6687.conf ]; then
-      rm -f /etc/modules-load.d/99-nct6687.conf 2>/dev/null || true
+# Take the old drop-in back off any machine that still carries it.
+#
+# NB: deliberately NOT inside `if [ "$GPU" = amd ]`. Removing a file this repo
+# no longer owns is unconditionally correct, and hanging it off GPU detection
+# would mean a machine where detection returns `mixed` (see lib/detect.sh) keeps
+# the setting that caused the freeze loop. Cleanup must not depend on the
+# detection working.
+#
+# NB: this is also the emergency fix for the machine that is already broken -
+# `sudo ./system/apply.sh` removes the drop-in, regenerates the initramfs, and
+# the next boot is stock. It costs nothing on a machine that never had it.
+INITRAMFS_STALE=0
+remove_file /etc/modprobe.d/99-amdgpu-ppfeaturemask.conf \
+  "this repo no longer sets amdgpu.ppfeaturemask - 0xffffffff hung Polaris in a GPU reset loop"
+
+# Which Nuvoton chip is on the board is PROBED, never inferred from the DMI
+# board name - see lib/sensors.sh for what that guess cost. Root only, and never
+# under --dry-run, because inserting a module is a change to the machine.
+#
+# NB: only `warn` inside here. It writes to stderr; info/ok write to stdout and
+# would be captured as part of this function's return value.
+probe_board_sensor() {
+  local m out
+  for m in $BOARD_SENSOR_MODS; do
+    board_sensor_available "$m" || continue
+    if ! out=$(modprobe "$m" 2>&1); then
+      warn "modprobe $m failed: ${out:-no output}"
+      continue
     fi
+    if board_sensor_bound >/dev/null 2>&1; then echo "$m"; return 0; fi
+    # Inserted, found no chip. Take it back out rather than leave a driver
+    # loaded that reports nothing and will be loaded again at every boot.
+    modprobe -r "$m" >/dev/null 2>&1 || true
+  done
+  return 1
+}
+
+BOARD_SENSOR_MOD=''
+if [ "$PROFILE" = desktop ]; then
+  info "Board sensors (Nuvoton Super-I/O)"
+  # Already bound - from a previous boot's drop-in, or an autoload. That is the
+  # answer; do not re-probe hardware that has already told you what it is.
+  BOARD_SENSOR_MOD=$(board_sensor_bound 2>/dev/null || true)
+  if [ -n "$BOARD_SENSOR_MOD" ]; then
+    ok "$BOARD_SENSOR_MOD is bound - the chip is present"
+  elif [ "$DRY" -eq 1 ]; then
+    info "  nothing bound yet; a real run would try: $BOARD_SENSOR_MODS"
+  else
+    BOARD_SENSOR_MOD=$(probe_board_sensor || true)
+  fi
+
+  if [ -n "$BOARD_SENSOR_MOD" ]; then
+    # The drop-in makes it load at boot; systemd-modules-load.service reads
+    # /etc/modules-load.d once, at boot, and nothing re-reads it.
     install_file modules-load.d/99-"$BOARD_SENSOR_MOD".conf \
                  /etc/modules-load.d/99-"$BOARD_SENSOR_MOD".conf
-  else
-    info "skipping $BOARD_SENSOR_MOD drop-in - module not installed (cpu=$CPU_VENDOR).
-       A modules-load.d entry for a module that does not exist fails
-       systemd-modules-load.service at every boot."
+    # Exactly one of the two may be installed. Whichever we did not choose is
+    # stale - and two Super-I/O drivers loading at boot is the port-contention
+    # case this whole probe exists to avoid.
+    for _other in $BOARD_SENSOR_MODS; do
+      [ "$_other" = "$BOARD_SENSOR_MOD" ] && continue
+      if [ "$DRY" -eq 0 ] && [ -f "/etc/modules-load.d/99-$_other.conf" ]; then
+        rm -f "/etc/modules-load.d/99-$_other.conf" 2>/dev/null || true
+        ok "removed stale /etc/modules-load.d/99-$_other.conf"
+      fi
+    done
+    unset _other
+    if board_sensor_has_fan; then
+      ok "board reports a fan RPM"
+    else
+      warn "$BOARD_SENSOR_MOD bound but publishes no fan input - 'sensors' is the
+       honest check. The drop-in is installed either way; a chip that binds and
+       reports nothing is a driver question, not a configuration one."
+    fi
+  elif [ "$DRY" -eq 0 ]; then
+    # NB: install NOTHING. This is the branch the old board-name guess did not
+    # have: it asserted nct6687 for every board it did not recognise, so a
+    # machine with no Nuvoton chip got a modules-load.d entry regardless.
+    info "no Nuvoton board sensor found - installing no drop-in.
+       k10temp (CPU) and amdgpu (GPU) still report temperatures.
+       To investigate by hand: sudo sensors-detect"
   fi
 fi
 
 [ "$DRY" -eq 1 ] && { info "dry run - nothing written"; exit 0; }
 
 info "Reloading"
-sysctl --system >/dev/null && ok "sysctl reloaded"
+run_step "sysctl reloaded"    sysctl --system
 # NB: udevadm control --reload only makes udev re-read the RULES. It does not
 # re-evaluate them against existing devices - that is what the zram trigger
 # further down does, via the restart.
-udevadm control --reload >/dev/null 2>&1 && ok "udev rules reloaded" ||
-  warn "udevadm control --reload failed"
-systemctl daemon-reload            && ok "systemd reloaded"
-systemctl restart systemd-journald && ok "journald restarted"
+run_step "udev rules reloaded" udevadm control --reload
+run_step "systemd reloaded"    systemctl daemon-reload
+run_step "journald restarted"  systemctl restart systemd-journald
 
-# NB: nothing above loads the sensor module. /etc/modules-load.d is read ONCE,
-# by systemd-modules-load.service at boot, and no reload re-reads it - so
-# installing the drop-in a few lines up left nct6687 absent until the next
-# reboot, and doctor.sh reported a red "nct6687 module loaded: no" on a machine
-# that was correctly configured and just had not been restarted.
-#
-# Worth contrasting with ppfeaturemask, which genuinely cannot be fixed here:
-# that is a module PARAMETER for a driver that is already loaded and driving the
-# display, so it waits for the initramfs and a reboot. This one is only an
-# INSERTION, and an insertion can happen now.
-#
-# NB: guarded on the drop-in existing rather than on $PROFILE, so it stays true
-# to what was actually installed above - including the case where the module was
-# not built and the drop-in was deliberately skipped.
-if [ -n "${BOARD_SENSOR_MOD:-}" ] && [ -f "/etc/modules-load.d/99-$BOARD_SENSOR_MOD.conf" ] && ! lsmod | grep -q "^$BOARD_SENSOR_MOD"; then
-  modprobe "$BOARD_SENSOR_MOD" 2>/dev/null && ok "$BOARD_SENSOR_MOD loaded" ||
-    warn "modprobe $BOARD_SENSOR_MOD failed - check 'dkms status' (it may not be built for $(uname -r))"
-fi
+# NB: no modprobe step here any more. The sensor module needs no separate load:
+# the probe further up INSERTED it in order to find out whether it binds, so by
+# the time control reaches here it is either loaded or was never the right
+# module. /etc/modules-load.d is what makes it come back at the next boot -
+# systemd-modules-load.service reads that directory once, at boot, and nothing
+# re-reads it, which is why the insertion has to happen during the run.
 
-# NB: only when a modprobe.d file actually changed. mkinitcpio -P is ~30s and
-# this script's whole contract is that re-running it is cheap and boring.
+# ── initramfs ────────────────────────────────────────────────────────────────
+# NB: READ THE TRIGGER. This fires only when remove_file deleted something from
+# /etc/modprobe.d, and this repo INSTALLS no /etc/modprobe.d file at all - so on
+# a clean machine INITRAMFS_STALE can never become 1 and mkinitcpio is never
+# invoked. A first bootstrap does not touch the boot path. That is structural,
+# not a condition someone has to keep getting right.
+#
+# It exists for exactly one transition: a machine still carrying the
+# ppfeaturemask drop-in. Deleting that file from /etc is NOT enough on its own -
+# amdgpu loads from the initramfs and reads the copy mkinitcpio's modconf hook
+# baked in there, so without this the script would report the tweak removed and
+# leave the machine hanging every ten seconds anyway.
+#
+# The previous version was the inverse of all of this: its staleness test
+# compared a hex string from sysfs against a decimal literal, so it was
+# permanently true and regenerated the initramfs on every single run - which is
+# what eventually pushed ppfeaturemask into a booted image.
 if [ "$INITRAMFS_STALE" -eq 1 ]; then
-  info "Regenerating the initramfs"
-  # WHY: modprobe options only reach a module that loads from the initramfs if
-  # the file is IN the initramfs. amdgpu loads there (the kms hook), and
-  # mkinitcpio's modconf hook copies /etc/modprobe.d/*.conf in - so the option
-  # is inert until this runs.
-  # On CachyOS with Limine, limine-mkinitcpio updates the bootloader's kernel/initramfs.
+  info "Regenerating the initramfs (a repo-owned /etc/modprobe.d file was removed)"
+  # On CachyOS with Limine, limine-mkinitcpio is what makes the BOOTLOADER
+  # consume the new image; plain `mkinitcpio -P` regenerates it and Limine can
+  # go on booting the old copy. That distinction is not cosmetic - it is why the
+  # bad mask stayed dormant for a while and then suddenly took effect.
   if command -v limine-mkinitcpio >/dev/null 2>&1; then
-    limine-mkinitcpio >/dev/null 2>&1 && ok "initramfs regenerated (limine)" ||
-      warn "limine-mkinitcpio failed - amdgpu will not pick up ppfeaturemask"
+    _mk=(limine-mkinitcpio)
   else
-    mkinitcpio -P >/dev/null 2>&1 && ok "initramfs regenerated" ||
-      warn "mkinitcpio -P failed - amdgpu will not pick up ppfeaturemask"
+    _mk=(mkinitcpio -P)
+  fi
+  # NB: NOT `>/dev/null 2>&1`. Hiding this is how a failure to build a bootable
+  # initramfs becomes one yellow line about a GPU power knob. Missing firmware,
+  # a broken hook or a full /boot all surface here or nowhere.
+  if _mkout=$("${_mk[@]}" 2>&1); then
+    ok "initramfs regenerated (${_mk[0]})"
+  else
+    FAILED=1
+    warn "${_mk[0]} FAILED. The removed module option is STILL inside the
+       initramfs and WILL be applied at the next boot. Do not reboot until this
+       is fixed. Full output:"
+    printf '%s\n' "$_mkout" | sed 's/^/      /' >&2
   fi
 fi
 
@@ -218,18 +404,27 @@ info "zram"
 if swapon --show=NAME --noheadings 2>/dev/null | grep -q zram; then
   swapoff /dev/zram0 2>/dev/null || true
 fi
-systemctl restart systemd-zram-setup@zram0.service 2>/dev/null &&
-  ok "zram reconfigured" || warn "zram restart failed - check 'zramctl'"
+run_step "zram reconfigured" systemctl restart systemd-zram-setup@zram0.service
 # The restart above fires the zram0 `change` event that both 30-zram.rules and
 # our 99- rule react to, so swappiness is settled by the post-check below. If
 # zram did NOT restart, nothing re-evaluated the rules against the live device -
 # force it, or the post-check reports 150 on a machine that is actually fine
 # after a reboot.
-udevadm trigger --action=change /sys/block/zram0 >/dev/null 2>&1 || true
+#
+# NB: these two keep `|| true` on purpose - a trigger that finds nothing to do
+# is not a fault - but they no longer discard stderr silently, because when the
+# TRIGGER is what failed the swappiness post-check below blames the udev rule
+# for it, which sends you to the wrong file entirely.
+run_step "zram udev rules re-evaluated" udevadm trigger --action=change /sys/block/zram0
 udevadm settle --timeout=5 >/dev/null 2>&1 || true
 
 if systemctl is-active --quiet docker; then
-  systemctl restart docker; ok "docker restarted"
+  # NB: `run_step`, not `systemctl restart docker; ok "..."`. That semicolon
+  # made this the one line in the file that could kill the run under `set -e` -
+  # and it sat directly above the vendor-defaults report and BOTH post-checks,
+  # so a failed docker restart silently skipped the swappiness verification
+  # this script's own comments call the honest source of truth.
+  run_step "docker restarted" systemctl restart docker
 else
   info "docker not running - nothing to restart"
 fi
@@ -243,9 +438,13 @@ done
 # Not shadowed - overridden after the fact, which is a different relationship
 # and worth naming differently. 30-zram.rules still runs; our 99- rule just has
 # the last word on vm.swappiness.
-# NB: `if`, not `[ ... ] && info`. Under `set -e` a bare test-and-command whose
-# test is FALSE is a failing command at the top level and aborts the whole
-# script - the same trap enable_unit() exists to contain.
+# NB: `if` rather than `[ ... ] && info`, which is fine but not for the reason
+# this comment used to give. It claimed a top-level test-and-command with a
+# FALSE test aborts under `set -e`. It does not - `-e` is suspended for every
+# command of an && list except the last, and a list whose first member fails is
+# not a trigger. See the corrected note above enable_unit() for the shape that
+# genuinely is fatal (a function whose last command evaluates false), which is
+# the one thing `return 0` there is actually buying.
 if [ -e /usr/lib/udev/rules.d/30-zram.rules ]; then
   info "  overriding vm.swappiness from /usr/lib/udev/rules.d/30-zram.rules"
 fi
@@ -266,25 +465,26 @@ sw=$(sysctl -n vm.swappiness 2>/dev/null || echo '?')
        'udevadm trigger --action=change /sys/block/zram0'.
        Otherwise: 'systemd-analyze cat-config sysctl.d'"
 
-# NB: read the MODULE PARAMETER back, not the file just written - same rule as
-# the swappiness check above, and for a nastier reason. A wrong ppfeaturemask
-# does not error: the sysfs nodes LACT needs are simply absent, so LACT opens,
-# shows correct-looking numbers, and silently cannot change any of them.
+# NB: the amdgpu ppfeaturemask post-check that used to sit here is gone with the
+# drop-in it verified. It ended in `want 0xffffffff - REBOOT to apply`, which
+# after the removal would have spent every run telling you to restore the exact
+# setting that caused the GPU reset loop. A check that outlives the thing it
+# checks does not decay into silence; it decays into confident wrong advice.
+#
+# The live mask is still worth SEEING, so scripts/doctor.sh reports it - as a
+# note, not an assertion. Whatever the driver picks is now the correct answer by
+# definition, and there is no repo-side value to compare it against.
 if [ "$GPU" = amd ]; then
-  ppf=$(cat /sys/module/amdgpu/parameters/ppfeaturemask 2>/dev/null || echo '')
-  if [ -z "$ppf" ]; then
-    warn "amdgpu module parameter not readable - is the amdgpu driver loaded?"
-  elif [ "$(printf '%d' "$ppf" 2>/dev/null || echo 0)" -eq 4294967295 ]; then
-    ok "amdgpu ppfeaturemask = $ppf (power management unlocked)"
-  else
-    # Expected on the run that FIRST installs the file: the running kernel
-    # still has the old value and only a reboot picks up the new initramfs.
-    info "amdgpu ppfeaturemask is $ppf, want 0xffffffff - REBOOT to apply.
-       If it is still wrong after a reboot, /etc/modprobe.d never reached the
-       initramfs: check that HOOKS in /etc/mkinitcpio.conf contains 'modconf',
-       or set amdgpu.ppfeaturemask=0xffffffff on the kernel command line."
-  fi
+  note "amdgpu ppfeaturemask" \
+       "$(cat /sys/module/amdgpu/parameters/ppfeaturemask 2>/dev/null || echo '<unreadable>') (driver default; this repo no longer sets it)"
 fi
 
 steps_end
+# NB: a real exit status, which this script did not have before. Everything
+# above is written to keep going after a failure so one bad step does not cost
+# you the rest of the run - but "kept going" is not "succeeded", and a caller
+# (or a person skimming) needs to be able to tell.
+if [ "$FAILED" -ne 0 ]; then
+  die "one or more steps FAILED - see the warnings above. Nothing was rolled back."
+fi
 info "Done. Verify with: scripts/doctor.sh"

@@ -53,7 +53,7 @@
 
 set -uo pipefail
 
-# hash: 20260905b  (bump to force a re-apply when you change a VALUE below;
+# hash: 20260905c  (bump to force a re-apply when you change a VALUE below;
 #                   the state line above already covers changes in the
 #                   environment the guards test)
 
@@ -76,8 +76,8 @@ CURSOR="WhiteSur-cursors"
 LAUNCHER_ICON="catppuccin-latte"
 LAUNCHER_ICON_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps/$LAUNCHER_ICON.png"
 # ── sizes: Plasma's own defaults, and no longer per-machine ─────────────────
-# These four are exactly what a stock Plasma 6 install uses - 10 pt general,
-# 9 pt smallest-readable, 10 pt fixed, 24 px cursor. Writing them anyway is not
+# These four are what a stock Plasma 6 install uses - see the NB above the
+# values themselves for the schema file that says so. Writing them anyway is not
 # redundant: the Global Theme applied further down can carry its own, and this
 # script is the one place that states what the desktop should look like.
 #
@@ -107,16 +107,35 @@ LAUNCHER_ICON_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/a
 # flat `font-size = 10` in the same pass, for the same reason. Change one, look
 # at the other. scripts/doctor.sh still prints the live Plasma scale, which is
 # now context rather than an assumption these values depend on.
-UI_PT=10; UI_SMALL_PT=9; MONO_PT=10; CURSOR_SIZE=24
+# NB: these four are Plasma 6's OWN defaults, and that is checkable rather than
+# remembered - /usr/share/config.kcfg/fontssettings.kcfg is the schema Plasma
+# ships, and it gives General/font 10, General/fixed 10,
+# General/smallestReadableFont 8, with 24 px the cursor size CachyOS puts in
+# /etc/skel. An earlier version of this comment claimed 9 was the stock
+# smallest-readable size. It is 8; the schema is the source of truth, not
+# recollection, and the value below now matches it.
+UI_PT=10; UI_SMALL_PT=8; MONO_PT=10; CURSOR_SIZE=24
 WALLPAPER="${XDG_DATA_HOME:-$HOME/.local/share}/wallpapers/Catppuccin-Latte/contents/images/3840x2160.png"
 LOCK_WALLPAPER="$WALLPAPER"
 
 # Qt6 font spec: Family,size,-1,5,weight,italic,underline,strikeout,fixed,...
 # Plasma 6 uses REAL weights (400 = regular). Plasma 5 used 50 here; a 5-era
 # string is not a parse error, it just silently renders everything semi-bold.
+#
+# The weight ladder, because the next value chosen here will need it:
+#   400 Regular · 500 Medium · 600 DemiBold/Semi-Bold · 700 Bold · 900 Black
 UI_FONT="Adwaita Sans,$UI_PT,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
 UI_FONT_SMALL="Adwaita Sans,$UI_SMALL_PT,-1,5,400,0,0,0,0,0,0,0,0,0,0,1"
-UI_FONT_BOLD="Adwaita Sans,$UI_PT,-1,5,700,0,0,0,0,0,0,0,0,0,0,1"
+# The title bar, and the ONE value on this screen that is deliberately not
+# Plasma's default - the schema says WM/activeFont is Regular. Semi-Bold (600)
+# is a choice, asked for on 2026-09-05, and it is worth naming as a choice so
+# nobody "restores" it to 400 while tidying the rest of this block back to stock.
+#
+# NB: 600, not 700, and the variable is no longer called _BOLD because it is no
+# longer bold. Adwaita Sans ships a real SemiBold face (fontconfig weight 180 in
+# /usr/share/fonts/Adwaita/AdwaitaSans-Regular.ttf), so Qt picks a designed
+# weight here rather than synthesising one from Regular.
+UI_FONT_TITLE="Adwaita Sans,$UI_PT,-1,5,600,0,0,0,0,0,0,0,0,0,0,1"
 # NB: "CaskaydiaCove Nerd Font", not "Cascadia Code NF". The package is
 # ttf-cascadia-code-nerd but the patched fonts inside it register as Caskaydia
 # Cove; the old string matched nothing and Qt fell back to a proportional sans.
@@ -241,7 +260,7 @@ kwriteconfig6 --file kdeglobals --group General --key menuFont             "$UI_
 kwriteconfig6 --file kdeglobals --group General --key toolBarFont          "$UI_FONT"
 kwriteconfig6 --file kdeglobals --group General --key smallestReadableFont "$UI_FONT_SMALL"
 kwriteconfig6 --file kdeglobals --group General --key fixed                "$MONO_FONT"
-kwriteconfig6 --file kdeglobals --group WM      --key activeFont           "$UI_FONT_BOLD"
+kwriteconfig6 --file kdeglobals --group WM      --key activeFont           "$UI_FONT_TITLE"
 
 # Match fontconfig's rasterisation so Qt does not second-guess it. See
 # ~/.config/fontconfig/fonts.conf for why hintslight + rgb subpixel.
