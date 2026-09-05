@@ -73,7 +73,7 @@ What each axis selects:
 |---|---|---|
 | `CPU_VENDOR` | `packages/cpu-{intel,amd}.tsv` | `thermald` enabled only on Intel |
 | `GPU` | `packages/gpu-{intel,amd}.tsv` | `LIBVA_DRIVER_NAME`; `amdgpu.ppfeaturemask`; `lactd` |
-| `PROFILE` | `packages/{gaming,creative}.tsv` on desktop | font sizes, scroll step, MangoHud, gamemode |
+| `PROFILE` | `packages/{gaming,creative}.tsv` on desktop | scroll step, MangoHud, gamemode |
 
 Everything else — `core`, `dev`, `reliability`, `desktop` (which means the graphical
 *session*, on both machines) — is shared.

@@ -37,18 +37,23 @@
 # Plasma, and the rendered text changes - so the hash changes, so chezmoi
 # re-runs this by itself. No manual step, and no re-running on every apply.
 #
+# NB: there is no `profile=` entry below any more, and its absence is the point.
+# d8b07c0 added one because the font and cursor SIZES differed per machine, so
+# the rendered script did too. They no longer do - nothing in this file varies
+# by .profile - and an entry for an input that changes no output would say the
+# opposite. Put it back in the same commit if a per-profile value ever returns.
+#
 # state: icons={{ if stat "/usr/share/icons/breeze/index.theme" }}y{{ else }}n{{ end }}
 #        launcher={{ if stat (joinPath .chezmoi.homeDir ".local/share/icons/hicolor/512x512/apps/catppuccin-latte.png") }}y{{ else }}n{{ end }}
 #        lnf={{ if stat (joinPath .chezmoi.homeDir ".local/share/plasma/look-and-feel/Catppuccin-Latte-Blue/metadata.json") }}y{{ else }}n{{ end }}
 #        splash={{ if stat (joinPath .chezmoi.homeDir ".local/share/plasma/look-and-feel/Catppuccin-Latte-Blue-splash/contents/splash/Splash.qml") }}y{{ else }}n{{ end }}
 #        cursor={{ if stat (joinPath .chezmoi.homeDir ".local/share/icons/WhiteSur-cursors/index.theme") }}y{{ else if stat "/usr/share/icons/WhiteSur-cursors/index.theme" }}y{{ else }}n{{ end }}
 #        kwrite={{ if lookPath "kwriteconfig6" }}y{{ else }}n{{ end }}
-#        profile={{ .profile }}
 #        session={{ output "sh" "-c" "pgrep -x plasmashell >/dev/null 2>&1 && echo live || echo headless" }}
 
 set -uo pipefail
 
-# hash: 20260905a  (bump to force a re-apply when you change a VALUE below;
+# hash: 20260905b  (bump to force a re-apply when you change a VALUE below;
 #                   the state line above already covers changes in the
 #                   environment the guards test)
 
@@ -70,29 +75,39 @@ CURSOR="WhiteSur-cursors"
 # if that changes. The PNG is the same Catppuccin logo fastfetch uses.
 LAUNCHER_ICON="catppuccin-latte"
 LAUNCHER_ICON_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps/$LAUNCHER_ICON.png"
-# ── sizes: the ONLY thing on this screen that is per-machine ────────────────
-# NB: a point is supposed to be a physical unit, so "the same size looks the
-# same everywhere". It does not: Plasma MULTIPLIES every point size and the
-# cursor size by the display scale factor, and the two machines run different
-# factors - 125 % on the laptop's ~157 ppi panel, 100 % on the desktop's ~102
-# ppi one. A single hardcoded number therefore renders ~25 % physically smaller
-# on the desktop, on the lower-DPI screen where that hurts more.
+# ── sizes: Plasma's own defaults, and no longer per-machine ─────────────────
+# These four are exactly what a stock Plasma 6 install uses - 10 pt general,
+# 9 pt smallest-readable, 10 pt fixed, 24 px cursor. Writing them anyway is not
+# redundant: the Global Theme applied further down can carry its own, and this
+# script is the one place that states what the desktop should look like.
 #
-# This is the identical trap that ghostty solves in
-# home/private_dot_config/ghostty/config.ghostty.tmpl (font-size 10 vs 12), and
-# it went unnoticed here for longer only because this file was already a .tmpl
-# for an unrelated reason, so nothing flagged that it never used .profile.
-# 10 x 1.25 and 12 x 1.0 land in the same physical place; so do 24 x 1.25 and 32.
+# WHY THIS IS NOT TWO BRANCHES ANY MORE. d8b07c0 split it - 10/9/10/24 on the
+# laptop, 12/11/12/32 on the desktop - on the argument that a point is not a
+# physical unit here, because Plasma MULTIPLIES every point size and the cursor
+# size by the display scale factor, and the two machines run different ones
+# (125 % on the laptop's ~157 ppi panel, 100 % on the desktop's ~102 ppi one).
+# 10 x 1.25 and 12 x 1.0 land in the same physical place, and so do 24 x 1.25
+# and 32. The arithmetic was correct.
 #
-# NB: if you change a machine's Plasma scale in System Settings, change these
-# with it - and ghostty's font-size, and re-read the fontconfig note.
-# scripts/doctor.sh prints the live scale next to what these assume, which is
-# the only reason that instruction is checkable rather than hopeful.
-{{ if eq .profile "laptop" -}}
+# It was reverted on request anyway, and the reason is worth writing down,
+# because the arithmetic will look convincing again to the next person who
+# reads it: EQUAL PHYSICAL SIZE ACROSS THE TWO MACHINES WAS NEVER THE GOAL. It
+# is what the split delivers, it is a defensible thing to want, and it is not
+# what was wanted here - the bumped desktop was simply bigger than asked for.
+# The goal is a comfortable size, that is a judgement and not a calculation,
+# and the judgement is 10 pt on both machines.
+#
+# So: do not re-derive the split from the ppi numbers. If the desktop ever does
+# want larger text, the honest knob is that machine's Plasma scale factor in
+# System Settings, which moves everything together - fonts, cursor, icons and
+# panel - instead of these four values drifting out of step with the rest of
+# the desktop.
+#
+# NB: home/private_dot_config/ghostty/config.ghostty.tmpl was reverted to a
+# flat `font-size = 10` in the same pass, for the same reason. Change one, look
+# at the other. scripts/doctor.sh still prints the live Plasma scale, which is
+# now context rather than an assumption these values depend on.
 UI_PT=10; UI_SMALL_PT=9; MONO_PT=10; CURSOR_SIZE=24
-{{- else -}}
-UI_PT=12; UI_SMALL_PT=11; MONO_PT=12; CURSOR_SIZE=32
-{{- end }}
 WALLPAPER="${XDG_DATA_HOME:-$HOME/.local/share}/wallpapers/Catppuccin-Latte/contents/images/3840x2160.png"
 LOCK_WALLPAPER="$WALLPAPER"
 

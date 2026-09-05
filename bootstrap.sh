@@ -340,7 +340,7 @@ if command -v chezmoi >/dev/null; then
     # in the file, which is what this does.
     #
     # NB: this matters because a stale `profile` does not merely pick the wrong
-    # font size - it makes the machine disagree with itself. bootstrap.sh asks
+    # scroll step - it makes the machine disagree with itself. bootstrap.sh asks
     # lib/detect.sh and installs gaming.tsv + creative.tsv; home/.chezmoiignore
     # asks chezmoi's stored copy and SKIPS .config/MangoHud and
     # .config/gamemode.ini. You end up with gamemode and MangoHud installed and

@@ -75,26 +75,28 @@
 # scripts/doctor.sh now runs exactly that, because this failed silently for
 # weeks.
 font-family = CaskaydiaCove Nerd Font
-{{ if eq .profile "laptop" -}}
-# 10 at ~157 ppi with Plasma at 125%. See the desktop branch for why this is
-# not one number.
-font-size = 10
-{{- else -}}
-# 12 at ~102 ppi with Plasma at 100%. NB: a point is supposed to be a physical
-# unit, so "the same font-size looks the same everywhere" - it does not, because
-# Plasma's scale factor multiplies it and the two machines run different
-# factors. 10 x 1.25 on the laptop and 12 x 1.0 here land in the same place.
-# If you change the desktop's Plasma scale, change this with it.
+# ONE size, both machines, and this used to be two.
 #
-# NB: on the desktop this line does NOT appear in `ghostty +show-config`, and
-# that is fine - 12 is Ghostty's own default (`ghostty +show-config --default`
-# confirms it), and the header above explains that show-config omits anything
-# matching a default. So the desktop hits the one case where "absent" is
-# indistinguishable from "silently rejected". Verified the honest way instead:
-# setting 13 makes the key appear, setting __bogus__ makes it vanish - so the
-# file IS parsed and 12 IS accepted. Do not "fix" its absence.
-font-size = 12
-{{- end }}
+# d8b07c0 split it - 10 on the laptop, 12 on the desktop - reasoning that a
+# point is not really a physical unit here, because Plasma MULTIPLIES point
+# sizes by the display scale factor and the two machines run different ones
+# (125 % on the laptop's ~157 ppi panel, 100 % on the desktop's ~102 ppi one).
+# 10 x 1.25 and 12 x 1.0 do land in the same physical place, so the arithmetic
+# was right. Reverted on request anyway: equal physical size across the two
+# machines is what the split buys, and it is not what was wanted - the desktop
+# was simply bigger than asked for. A comfortable size is a judgement, not a
+# calculation, and the judgement is 10 on both.
+#
+# So 10 is now the flat value, which is what this file said before that split.
+# It is BELOW Ghostty's own default of 12 (`ghostty +show-config --default`),
+# which is the useful consequence: the key is not a default, so it appears in
+# `ghostty +show-config` on both machines and the header's "absent is
+# indistinguishable from rejected" trap does not apply to this line any more.
+#
+# NB: this is the same decision as the sizes in
+# home/.chezmoiscripts/run_onchange_after_20-kde-theme.sh.tmpl, which were
+# reverted in the same pass. Change one, look at the other.
+font-size = 10
 
 # NB: only two features, and that is deliberate. This list carried 16 entries
 # when the font was Maple Mono (cv03, cv05, cv09, cv10, cv61, cv38, cv42, cv43,

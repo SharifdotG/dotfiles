@@ -177,13 +177,24 @@ fi
 note "GPU" "$(lspci -nn 2>/dev/null | sed -n 's/.*\(VGA compatible controller\|3D controller\)[^:]*: //p' | head -1)"
 
 # NB: a note, not a chk, and deliberately so - the scale is a preference, not a
-# defect. But it is a preference three templates SILENTLY depend on, and nothing
-# else in this repo ever reads it back. Plasma multiplies every point size by
-# this factor, which is why ghostty (font-size 10 vs 12), the kde-theme script
-# (UI fonts and cursor size) and fontconfig all branch on .profile with the
-# 1.25-vs-1.00 split baked into their comments. Change the scale in System
-# Settings and those three become quietly wrong, with no error anywhere. Printing
-# it is what makes that assumption falsifiable.
+# defect. Nothing else in this repo ever reads it back, and it is printed here
+# because Plasma multiplies every point size AND the cursor size by it, so it is
+# the difference between "10 pt" as written and what actually lands on glass.
+#
+# CORRECTION, 2026-09-05. This used to say three templates "silently depend" on
+# the scale, branching on .profile with a 1.25-vs-1.00 split - ghostty at
+# font-size 10 vs 12, the kde-theme script at 10/24 vs 12/32, and fontconfig.
+# That is no longer true and it was already half wrong when written:
+#   - ghostty and kde-theme were reverted to one flat set of values on both
+#     machines (Plasma's own defaults: 10/9/10 pt, 24 px cursor). Equal PHYSICAL
+#     size across the two machines was the thing the split bought, and it turned
+#     out not to be wanted - see the long note in the kde-theme script.
+#   - fontconfig branches on .profile but both arms emit the SAME rasterisation
+#     values; only the explanatory comment differs. It never depended on the
+#     scale at all.
+# So changing the scale in System Settings no longer makes any template wrong -
+# it just makes everything bigger or smaller together, which is the honest knob
+# for that and is now what the kde-theme script tells you to reach for.
 #
 # NB: kwinoutputconfig.json, not kdeglobals - under Wayland the scale is per
 # OUTPUT and kdeglobals carries nothing. Multiple values mean mixed-DPI outputs.
@@ -195,7 +206,11 @@ case "$PROFILE" in
   desktop) _want=1 ;;
   *)       _want='?' ;;
 esac
-note "Plasma scale" "${_scale:-<unknown>} (templates assume $_want for profile=$PROFILE)"
+# NB: "usual", not "assumed". No template reads this any more (see the
+# correction above); it is the value each machine has been set to, printed so a
+# scale that changed by accident is visible rather than inferred from "the
+# desktop looks off today".
+note "Plasma scale" "${_scale:-<unknown>} (usual for profile=$PROFILE: $_want)"
 
 step "Memory pressure defences"
 chk "vm.swappiness"              180      "$(sysctl -n vm.swappiness 2>/dev/null)"
