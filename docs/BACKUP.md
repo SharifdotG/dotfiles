@@ -208,6 +208,20 @@ cd ~/Documents/Code/structflow && docker compose up -d
 > fresh machine is the restore itself. Do not do it on an untuned 16 GB box; see
 > `docs/MIGRATION.md` Stage 5.
 
+> **If a restore reports a tally smaller than the snapshot holds, read this.** Until
+> **2026-09-06** `confirm()` used a bare `read`, which reads **stdin** — and both callers sit
+> inside `while read … done < "$MANIFEST"` loops, where stdin *is* the manifest. The prompt never
+> reached the terminal: it consumed **the next row of the manifest** as the answer, that row was
+> never `y`, and the loop skipped the database it had just silently eaten. A three-database
+> snapshot reported `0/2 databases restored` with `keycloak` absent from the output entirely, and
+> four volumes showed up as two. **Every interactive run was unable to restore anything**; only
+> `--yes` worked, because it returns before reading. `confirm()` now reads the terminal on a
+> dedicated fd and the loops read on fd 3, so neither the prompt nor any `docker` call in the
+> loop body can eat a row.
+>
+> A run with no controlling terminal and no `--yes` now **fails fast with one message** instead
+> of skipping every row and printing `0/N`, which read like a corrupt snapshot.
+
 ### When the code tree moves
 
 A snapshot records each project's directory as the **absolute path it had at backup time**,

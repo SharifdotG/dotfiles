@@ -172,6 +172,24 @@ if [ "$LIST_ONLY" -eq 1 ]; then
   exit 0
 fi
 
+# ── the terminal to prompt on, opened once as fd 9 ───────────────────────────
+# NB: `[ -r /dev/tty ] && [ -w /dev/tty ]` IS NOT A VALID TEST, and was the
+# first attempt. /dev/tty is a character device that exists and is mode rw for
+# everyone, so both tests pass in a session with NO controlling terminal - and
+# the redirect then fails at open() with ENXIO. Verified under `setsid`:
+#     ./scripts/db-restore.sh ...: /dev/tty: No such device or address
+# printed once per manifest row, with every row skipped. Opening it is the only
+# honest test, so that is what this does.
+TTY_OK=0
+{ exec 9<>/dev/tty; } 2>/dev/null && TTY_OK=1
+
+# Fail fast rather than grinding through every row skipping it. A run that
+# cannot confirm anything cannot restore anything, and the old behaviour - a
+# warning per row and a 0/N tally at the end - reads like the snapshot is bad.
+if [ "$ASSUME_YES" -eq 0 ] && [ "$TTY_OK" -eq 0 ]; then
+  die "no controlling terminal to confirm on. Run this from a terminal, or pass --yes to accept every destructive step unattended."
+fi
+
 UI_STEPS=5
 banner "Database restore" "$SNAP"
 
@@ -179,8 +197,35 @@ command -v docker >/dev/null || die "docker is not installed"
 docker info >/dev/null 2>&1 || die "cannot talk to the docker daemon (is it running? are you in the docker group?)"
 
 confirm() { # confirm <question>
+  # READ FROM THE TERMINAL, NOT FROM STDIN, AND THIS IS NOT A STYLE CHOICE.
+  #
+  # THE BUG, found 2026-09-06: this used a bare `read -r -p`, which reads stdin.
+  # Both callers sit inside `while read ... done < "$MANIFEST"` loops, where
+  # stdin IS the manifest. So the prompt never reached the terminal - it
+  # consumed THE NEXT ROW OF THE MANIFEST as the answer, that row was not "y",
+  # and the loop skipped the database it had just silently eaten.
+  #
+  # Reproduced minimally: a 3-row file processes rows 1 and 3, reports "2 rows",
+  # and marks both skipped. The real symptom was
+  #
+  #     ▸ [4/5] Databases
+  #     ==> structflow / structflow    structflow/structflow ... skipped
+  #     ==> tryton / tryton            tryton/tryton ......... skipped
+  #       0/2 databases restored
+  #
+  # on a snapshot whose databases.tsv holds THREE rows - keycloak did not appear
+  # at all, because the structflow prompt had swallowed it. Every interactive
+  # run was silently unable to restore anything; only --yes worked, because it
+  # returns above without ever reading.
+  #
+  # The callers now also read on a dedicated fd, so either fix alone is enough.
+  # Both are here because they guard different things: the fd stops any command
+  # in the loop body from eating rows, this stops the prompt reading data.
   [ "$ASSUME_YES" -eq 1 ] && return 0
-  local a; read -r -p "  $1 [y/N] " a
+  [ "$TTY_OK" -eq 1 ] || return 1   # unreachable: the guard below exits first
+  local a
+  printf '  %s [y/N] ' "$1" >&9
+  read -r a <&9 || a=""
   case "${a:-n}" in [yY]*) return 0 ;; *) return 1 ;; esac
 }
 crunning() { [ "$(docker inspect "$1" --format '{{.State.Running}}' 2>/dev/null)" = true ]; }
@@ -271,7 +316,10 @@ step "Volumes"
 if [ ! -r "$MAN_VOL" ]; then
   ok "none in this snapshot"
 else
-  while IFS=$'\t' read -r vol file _bytes _sum; do
+  # NB: fd 3, not stdin. This loop's body prompts and runs docker; anything in
+  # there that reads stdin would otherwise consume the next row of the manifest
+  # and skip a volume without ever naming it. See confirm().
+  while IFS=$'\t' read -r vol file _bytes _sum <&3; do
     case "$vol" in '#'*|'') continue ;; esac
     [ -z "$ONLY" ] || case "$vol" in "$ONLY"_*|"$ONLY"-*) ;; *) continue ;; esac
 
@@ -297,13 +345,17 @@ else
       warn "$vol: extract failed"
     fi
     [ "${#users[@]}" -gt 0 ] && docker start ${users+"${users[@]}"} >/dev/null 2>&1
-  done < "$MAN_VOL"
+  done 3< "$MAN_VOL"
 fi
 
 # ── 4 & 5. bring each database service up, then load it ──────────────────────
 step "Databases"
 DONE=0; TOTAL=0
-while IFS=$'\t' read -r proj svc cont image db user file _bytes _sum wd; do
+# NB: fd 3, not stdin - the same trap as the volumes loop above. The body
+# prompts (confirm) and shells out to docker; a read on stdin in here silently
+# eats the next database row. That is exactly how keycloak vanished from a
+# 3-row manifest that reported "0/2 databases restored".
+while IFS=$'\t' read -r proj svc cont image db user file _bytes _sum wd <&3; do
   case "$proj" in '#'*|'') continue ;; esac
   [ -z "$ONLY" ] || [ "$proj" = "$ONLY" ] || continue
   TOTAL=$((TOTAL+1))
@@ -366,7 +418,7 @@ while IFS=$'\t' read -r proj svc cont image db user file _bytes _sum wd; do
     warn "$proj/$db FAILED (exit $rc)"; sed 's/^/      /' "$err" >&2
   fi
   rm -f "$err"
-done < "$MAN_DB"
+done 3< "$MAN_DB"
 
 steps_end
 rule
