@@ -138,7 +138,10 @@ binary that plainly exists. Everything is normalised to LF.
 
 ```bash
 sudo ./system/apply.sh      # /etc drop-ins, and enable the units Arch ships disabled
-sudo usermod -aG docker "$USER"
+                            # - including docker.socket. Docker is socket-activated:
+                            #   dockerd starts on first use, not at boot (~0.3 GB)
+sudo usermod -aG docker "$USER"   # the one half apply.sh cannot finish: group
+                                  # membership only takes effect at the next login
 sudo usermod -aG kvm "$USER"    # only for Claude Desktop's Cowork tab (QEMU/KVM VM)
 ./scripts/reclaim.sh        # reclaim disk: pacman cache, orphans, coredumps
 ./scripts/secrets-setup.sh  # sign in to GitHub (gh auth login, over HTTPS)

@@ -25,6 +25,20 @@ chk() { # chk <label> <expected> <actual>
   fi
 }
 
+# NB: `systemctl is-enabled foo || echo disabled` is WRONG, and wrong in the one
+# case the check exists for. is-enabled PRINTS "disabled" and ALSO exits
+# non-zero, so the || fires on top of real output and chk compares against a
+# two-line string - the report then shows "disabled\ndisabled (want: enabled)"
+# precisely when a unit is off. is-active does the same with "inactive" (exit 3).
+# So: capture the output, ignore the status, and substitute only when there was
+# no output at all (a unit that does not exist). Same trap the packagekit check
+# further down already documents; this puts the fix in one place.
+unit_state() { # unit_state <is-enabled|is-active> <unit> <fallback>
+  local _s
+  _s=$(systemctl "$1" "$2" 2>/dev/null)
+  printf '%s' "${_s:-$3}"
+}
+
 # NB: THIS SCRIPT MUST NOT BE RUN WITH sudo, and the guard is here because an
 # earlier version of the "root snapshots" note below literally told you to.
 # Almost everything here is a USER-CONTEXT probe - ~/.zshrc, ~/.config/*,
@@ -56,8 +70,8 @@ _uarch=$(/lib64/ld-linux-x86-64.so.2 --help 2>/dev/null |
 # NB: derived, not hardcoded. It was a literal 11, which was right until the
 # desktop added two more sections and the last one printed "[13/11]" - the same
 # small wrongness bootstrap.sh already avoids by counting rather than guessing.
-# 14 since the unwanted-packages section landed.
-UI_STEPS=14
+# 14 since the unwanted-packages section landed, 15 since Docker.
+UI_STEPS=15
 [ "$PROFILE" = desktop ] && UI_STEPS=$(( UI_STEPS + 2 ))
 banner "doctor" "read-only health check · reports, never changes anything"
 info "System: $DISTRO / $DESKTOP / $SESSION_TYPE  (vm: $IS_VM, pkg column: $PKG_COL, ${_uarch:-?})"
@@ -229,10 +243,10 @@ chk "fs.inotify.max_user_watches" 524288  "$(sysctl -n fs.inotify.max_user_watch
 # where the default preset is `disable *` and nothing is on by default, enabled
 # vs. active is the whole point - a machine that passes today and forgets after
 # a reboot is exactly the failure this check exists to catch.
-chk "systemd-oomd active"        active   "$(systemctl is-active systemd-oomd 2>/dev/null)"
-chk "systemd-oomd enabled"       enabled  "$(systemctl is-enabled systemd-oomd 2>/dev/null || echo disabled)"
-chk "earlyoom active"            active   "$(systemctl is-active earlyoom 2>/dev/null)"
-chk "earlyoom enabled"           enabled  "$(systemctl is-enabled earlyoom 2>/dev/null || echo disabled)"
+chk "systemd-oomd active"        active   "$(unit_state is-active systemd-oomd not-found)"
+chk "systemd-oomd enabled"       enabled  "$(unit_state is-enabled systemd-oomd not-found)"
+chk "earlyoom active"            active   "$(unit_state is-active earlyoom not-found)"
+chk "earlyoom enabled"           enabled  "$(unit_state is-enabled earlyoom not-found)"
 # NB: verify earlyoom's arguments from the KERNEL, not from the file we wrote.
 # The whole reason the args live in an ExecStart= drop-in rather than
 # /etc/default/earlyoom is that EnvironmentFile= silently overrides Environment=
@@ -518,6 +532,52 @@ else
   chk "packagekit"               masked   "${_pk:-unknown}"
 fi
 note "reclaim targets resident" "$(ps -eo rss,comm --no-headers | grep -iE 'akonadi|packagekitd|Discover|baloo' | grep -v grep | awk '{s+=$1} END {printf "%.0f MB", s/1024}')"
+
+step "Docker"
+# NB: NOTHING HERE TALKS TO THE DAEMON. `docker info`, `docker version` and
+# `docker ps` all open /run/docker.sock, and opening that socket is precisely
+# what STARTS dockerd - so a "read-only" health check would silently spend the
+# ~0.3 GB that socket activation exists to save, on every run, on a 16 GB box.
+# Unit state and file contents answer every question below without it.
+if ! command -v docker >/dev/null; then
+  note "docker" "not installed"
+else
+  # THE check. Arch's preset is `disable *`, so the socket stays off until
+  # something switches it on - and until 2026-09-06 nothing in this repo did.
+  # The symptom is the same whether the socket was never enabled or someone
+  # disabled it: `docker info` fails at the Server: line and lazydocker draws
+  # empty panels, neither of which names the unit you actually need.
+  chk "docker.socket enabled"    enabled "$(unit_state is-enabled docker.socket not-found)"
+  chk "docker.socket listening"  active  "$(unit_state is-active docker.socket not-found)"
+  # NB: a PASS when dockerd is NOT enabled, which reads backwards until you
+  # remember what is being protected. docker.service enabled means the daemon is
+  # resident from boot whether or not a container ever runs; the socket alone
+  # means it starts on first use and `systemctl stop docker` gives the RAM back.
+  # Both units enabled is not "extra safe", it is the socket doing nothing.
+  chk "dockerd starts on demand" yes "$(case "$(unit_state is-enabled docker.service unknown)" in
+      enabled) echo 'no - docker.service enabled, dockerd is resident from boot';;
+      *) echo yes;; esac)"
+  note "dockerd resident now" "$(unit_state is-active docker.service unknown)"
+  # daemon.json is where the log cap and the builder GC live. Compare against
+  # the repo rather than merely testing -f: the failure this catches is an old
+  # copy from before a policy change, which exists and is wrong.
+  if [ -f /etc/docker/daemon.json ]; then
+    chk "daemon.json current"    yes "$(cmp -s system/docker/daemon.json /etc/docker/daemon.json &&
+        echo yes || echo 'differs from repo - run sudo ./system/apply.sh')"
+  else
+    chk "daemon.json current"    yes "MISSING - run sudo ./system/apply.sh"
+  fi
+  # Group membership is the other half, and it is the half no script can finish
+  # for you: usermod takes effect at the next LOGIN, so `id -nG` (the live
+  # session) and `id -nG "$USER"` (the passwd/group files) can legitimately
+  # disagree. Report both, because "added but not logged out yet" and "never
+  # added" produce the identical permission-denied on the socket.
+  chk "docker group (on disk)"   yes "$(id -nG "$USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker &&
+      echo yes || echo 'no - sudo usermod -aG docker "$USER"')"
+  chk "docker group (this login)" yes "$(id -nG | tr ' ' '\n' | grep -qx docker &&
+      echo yes || echo 'no - log out and back in')"
+  chk "lazydocker installed"     yes "$(command -v lazydocker >/dev/null && echo yes || echo no)"
+fi
 
 step "VS Code"
 S="$HOME/.config/Code - Insiders/User/settings.json"

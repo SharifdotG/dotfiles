@@ -441,10 +441,14 @@ The ordering *is* the content.
    machine wins unless you pass `--force`; dangling skill links are replaced regardless.
    Plugins are **not** restored — the cache is 37 MB and some entries still record a
    `C:\Users\...` install path, so it prints the list for `/plugin install` instead.
-10. **Docker last.** Install, `systemctl enable --now docker.socket` (socket activation means
-    dockerd is not resident until something talks to it — worth ~0.3 GB on a 16 GB box),
-    apply `daemon.json`, re-pull from the image list, and `docker load` **only** the local-only
-    images. Do not restore build cache. Then:
+10. **Docker last.** Install it, then `sudo ./system/apply.sh` — that writes `daemon.json`
+    **and** enables `docker.socket`, deliberately not `docker.service`: socket activation
+    means dockerd is not resident until something talks to it, worth ~0.3 GB on a 16 GB box.
+    (Enabling the socket used to be a manual step named only here and in `docs/BACKUP.md`,
+    which is how you get `daemon.json` in place, yourself in the `docker` group, and
+    `docker info` still failing at the `Server:` line. `scripts/doctor.sh` checks it now.)
+    Then re-pull from the image list, `docker load` **only** the local-only images, and do
+    not restore build cache:
 
     ```bash
     ./scripts/db-restore.sh ~/Backup/db/<stamp> --list   # read-only. Do this first, always

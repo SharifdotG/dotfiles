@@ -394,6 +394,25 @@ if [ "$GPU" = amd ] && systemctl list-unit-files lactd.service >/dev/null 2>&1; 
   enable_unit lactd.service
 fi
 
+# Docker: the SOCKET, and deliberately never docker.service. Socket activation
+# means dockerd is not resident until something actually opens
+# /run/docker.sock - worth ~0.3 GB on a 16 GB box, which is the entire argument
+# docs/MIGRATION.md step 10 makes. `systemctl enable docker.service` starts the
+# daemon at every boot and throws that saving away, so this does not touch it.
+#
+# NB: this was a manual step in two docs and in NO script, which is how a
+# machine ends up with /etc/docker/daemon.json installed by the block above, the
+# user in the docker group, lazydocker on PATH - every artefact of a working
+# setup except the one unit that starts the thing - and `docker info` still
+# answering "failed to connect to the docker API at unix:///var/run/docker.sock".
+# Arch's `disable *` preset means nothing switches it on for you; the daemon.json
+# we install is inert until it does.
+if systemctl list-unit-files docker.socket >/dev/null 2>&1; then
+  enable_unit docker.socket
+else
+  info "skipping docker.socket - docker is not installed"
+fi
+
 
 info "zram"
 # NB: the zram device comes from a GENERATOR, so daemon-reload re-reads

@@ -180,8 +180,11 @@ cd ~/dotfiles
 #    ~/Documents/Code/VSCode/structflow, .../SocialHousingOSS, ...
 
 # 6. docker, then the databases
-sudo usermod -aG docker "$USER"     # then log out and back in
-sudo systemctl enable --now docker.socket
+sudo usermod -aG docker "$USER"     # then log out and back in - this is the half
+                                    # no script can finish for you
+sudo ./system/apply.sh              # writes daemon.json AND enables docker.socket
+                                    # (the socket, not the service: dockerd starts
+                                    # on first use, not at boot)
 ./scripts/db-restore.sh ~/Backup/db/<stamp> --list    # read-only. Always do this first
 ./scripts/db-restore.sh ~/Backup/db/<stamp>
 
