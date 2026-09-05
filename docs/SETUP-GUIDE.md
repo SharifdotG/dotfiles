@@ -1136,6 +1136,28 @@ chat apps), so bootstrap installs them. What is worth knowing beyond the manifes
 - **`zed` is in `extra` too, and is deliberately not used** — see the Preview note above. Do
   not "fix" the `-` row over to `zed` or to `zed-preview-bin` either: the first is the wrong
   channel and the second lags and does not self-update.
+- **Pencil ships a `.desktop` file pointing at an icon it does not install.** `pencil-dev-appimage`
+  writes `Icon=pencil`, while its own icons land one name over as
+  `/usr/share/icons/hicolor/{256x256,512x512}/apps/pencil-dev.png`. Nothing errors — the launcher,
+  the task manager and Alt-Tab just show the generic placeholder. Note that `find` is misleading
+  here: several themes *do* ship an unrelated `pencil` (a cursor, and a `char-white` action glyph),
+  none of which the Breeze chain sees. Asking the real loader is unambiguous:
+
+  ```console
+  $ python3 -c "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk;
+  t=Gtk.IconTheme.new(); t.set_custom_theme('breeze');
+  print([ (n, bool(t.lookup_icon(n,48,0))) for n in ('pencil','pencil-dev') ])"
+  [('pencil', False), ('pencil-dev', True)]
+  ```
+
+  Fixed by `home/private_dot_local/share/applications/pencil-dev.desktop`, an override with the
+  same basename — XDG gives `~/.local/share/applications` precedence over `/usr/share`, so it
+  survives package upgrades, which an edit in `/usr/share` would not (pacman reverts it silently,
+  and writes no `.pacnew` because the file is not marked `backup=`). The override adds
+  `TryExec=pencil-dev`, which the packaged file lacks: without it, a user-level `.desktop` for a
+  missing binary would sit in the launcher forever on a machine where the AUR build failed.
+  `run_onchange_after_45-desktop-entries.sh` rebuilds `mimeinfo.cache` and `ksycoca` after it
+  lands — needed for the `pencil://` scheme handler, not for the icon.
 
 ### 💬 Chat & Social
 

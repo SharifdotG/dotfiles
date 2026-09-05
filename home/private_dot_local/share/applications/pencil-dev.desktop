@@ -1,0 +1,52 @@
+# Override for /usr/share/applications/pencil-dev.desktop, shipped by the AUR
+# package pencil-dev-appimage (packages/dev.tsv).
+#
+# THE BUG: the packaged entry says `Icon=pencil`, and no theme on this machine
+# has an app icon by that name, so Pencil shows up with the generic placeholder
+# in the launcher, the task manager and Alt-Tab. The package's OWN icons are
+# installed one name over:
+#
+#     /usr/share/icons/hicolor/512x512/apps/pencil-dev.png
+#     /usr/share/icons/hicolor/256x256/apps/pencil-dev.png
+#
+# Verified through the real icon loader rather than by eye - `find` alone is
+# misleading here, because several themes DO ship an unrelated `pencil` (a
+# cursor, and a char-white action glyph), none of which the Breeze chain sees:
+#
+#     Gtk.IconTheme('breeze').lookup_icon('pencil',     48, 0)  -> None
+#     Gtk.IconTheme('breeze').lookup_icon('pencil-dev', 48, 0)  -> .../256x256/apps/pencil-dev.png
+#
+# So the fix is one character class: Icon=pencil-dev. Everything else below is
+# copied verbatim from the packaged file.
+#
+# WHY AN OVERRIDE AND NOT AN EDIT IN /usr/share. That file is owned by pacman -
+# `pacman -Qo` names pencil-dev-appimage - so an edit there is reverted by the
+# next upgrade of the package, silently and without a .pacnew (pacman only
+# writes .pacnew for files marked backup=, which this is not). XDG resolution
+# gives ~/.local/share/applications precedence over /usr/share/applications for
+# the SAME BASENAME, so an override with the identical filename wins for good
+# and survives upgrades. Same reasoning as the .chezmoiignore GTK block: do not
+# fight a file another program owns, shadow it.
+#
+# NB: TryExec is added here and is NOT in the packaged file. It is what keeps
+# this override honest on a machine where the AUR build failed or Pencil was
+# removed: without it, a user-level .desktop for a missing binary stays in the
+# launcher forever as an entry that does nothing when clicked. With it, the
+# desktop hides the entry when `pencil-dev` is not on PATH. Do not drop it.
+#
+# Re-check after a Pencil upgrade with:
+#     diff <(grep -v '^#' ~/.local/share/applications/pencil-dev.desktop) \
+#          /usr/share/applications/pencil-dev.desktop
+# and carry over anything new except Icon and TryExec.
+[Desktop Entry]
+Name=Pencil
+Exec=pencil-dev %U
+TryExec=pencil-dev
+Terminal=false
+Type=Application
+Icon=pencil-dev
+StartupWMClass=Pencil
+X-AppImage-Version=1.2.0
+Comment=Desktop app for pen.dev
+MimeType=x-scheme-handler/pencil;
+Categories=Graphics;

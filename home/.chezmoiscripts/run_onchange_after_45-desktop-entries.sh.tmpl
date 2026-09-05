@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Rebuild the caches that index ~/.local/share/applications after this repo
+# writes a .desktop file into it.
+#
+# WHAT NEEDS THIS. Dropping a .desktop file on disk is not enough on its own:
+#
+#   mimeinfo.cache  - built by `update-desktop-database`, and it is what maps a
+#                     MIME type / URL scheme to the .desktop files that claim
+#                     it. home/private_dot_local/.../pencil-dev.desktop carries
+#                     MimeType=x-scheme-handler/pencil, so on a fresh machine
+#                     the user-level cache has to be regenerated or `pencil://`
+#                     resolves only through the SYSTEM cache.
+#   ksycoca         - Plasma's own service cache. plasmashell watches the
+#                     applications directories and rebuilds by itself, so this
+#                     is normally a no-op; kbuildsycoca6 is called anyway
+#                     because a headless/TTY apply has nothing watching, and it
+#                     is cheap and idempotent.
+#
+# The ICON fix in pencil-dev.desktop does NOT depend on either cache - icon
+# lookup reads the .desktop directly. This script is about the MimeType line
+# and about a rebuilt machine behaving like a running one.
+#
+# NB: THE STATE LINE HASHES THE .desktop FILES THEMSELVES, not just whether the
+# tools exist. These caches are derived data: the input that matters is the
+# CONTENT of what this repo ships into the applications directory. Hashing it
+# means editing a .desktop re-runs this and nothing else does - the same
+# reasoning 20-kde-theme uses for its `wallpaper=` entry. `include` reads
+# relative to the source directory (`home/`, per .chezmoiroot).
+#
+# NB: only files THIS REPO ships are hashed, deliberately. The target directory
+# also holds unmanaged entries written by other installers
+# (claude-code-url-handler.desktop, dev.zed.Zed-Preview.desktop) plus the caches
+# this script generates. Hashing the live directory would make the state line
+# depend on its own output and re-run forever.
+#
+# state: pencil={{ sha256sum (include "private_dot_local/share/applications/pencil-dev.desktop") }}
+#        udd={{ if lookPath "update-desktop-database" }}y{{ else }}n{{ end }}
+#        ksycoca={{ if lookPath "kbuildsycoca6" }}y{{ else }}n{{ end }}
+
+set -uo pipefail
+
+APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+
+[ -d "$APPS" ] || exit 0
+
+if command -v update-desktop-database >/dev/null 2>&1; then
+  # Writes $APPS/mimeinfo.cache. Non-fatal: a stale cache degrades scheme
+  # handling, it does not break the launcher, and it must not abort an apply.
+  update-desktop-database "$APPS" 2>/dev/null &&
+    echo "  desktop-entries: mimeinfo.cache rebuilt" ||
+    echo "  desktop-entries: WARNING - update-desktop-database failed"
+else
+  echo "  desktop-entries: no update-desktop-database - skipping mimeinfo.cache"
+fi
+
+# Plasma only. Guarded rather than assumed, exactly as 40-default-apps guards
+# kwriteconfig6: the cache above is the portable half and must not depend on
+# a KDE tool being present.
+if command -v kbuildsycoca6 >/dev/null 2>&1; then
+  kbuildsycoca6 --noincremental >/dev/null 2>&1 &&
+    echo "  desktop-entries: ksycoca rebuilt"
+fi
