@@ -13,7 +13,7 @@ detect_all
 banner "system" "/etc drop-ins · idempotent · shows a diff before writing"
 
 DRY=0; [ "${1:-}" = --dry-run ] && DRY=1
-[ "$(id -u)" -eq 0 ] || die "run me with sudo"
+[ "$DRY" -eq 1 ] || [ "$(id -u)" -eq 0 ] || die "run me with sudo"
 # NB: DESKTOP is unreliable in here - sudo strips XDG_CURRENT_DESKTOP, so
 # detect.sh falls back to pgrep. Do not branch on $DESKTOP in this file.
 #
@@ -97,42 +97,35 @@ if [ "$GPU" = amd ]; then
   # `if`, not `[ ... ] && ...`. Same reason as the note further down: this
   # script runs under `set -e` and a bare test-and-command is exactly the shape
   # that has bitten it before.
-  if [ "$CHANGED" -eq 1 ]; then INITRAMFS_STALE=1; fi
+  _ppf_now=$(cat /sys/module/amdgpu/parameters/ppfeaturemask 2>/dev/null || echo '')
+  if [ "$CHANGED" -eq 1 ] || [ "${_ppf_now:-0}" != 4294967295 ]; then
+    INITRAMFS_STALE=1
+  fi
 fi
-# NB: gated on PROFILE **and** on the module actually existing, because this is
-# the one fact in this repo that is neither a CPU fact nor a chassis fact - it is
-# a MOTHERBOARD fact (the Nuvoton Super-I/O on MSI B450/B550), and it is being
-# carried on two unrelated axes: packages/cpu-amd.tsv ships the driver by
-# CPU_VENDOR, this drop-in is installed by PROFILE. That lands correctly on the
-# machines this repo has, and wrongly on both combinations it does not:
-#
-#   Intel desktop -> PROFILE=desktop installs a drop-in naming a module that
-#                    cpu-intel.tsv never installed, and systemd-modules-load.service
-#                    then FAILS on every single boot.
-#   AMD laptop    -> cpu-amd.tsv builds a DKMS driver for a chip that is not there.
-#
-# The PROFILE test closes the second. `modinfo` closes the first, and is the
-# honest question anyway: "is this module installed", not "does this machine look
-# like the one I was written for". Loading it on a board without the chip is
-# harmless (it inserts and reports nothing - see the note in scripts/doctor.sh);
-# naming a module that does not exist is not.
-#
-# NB: modinfo only searches the RUNNING kernel's tree. Straight after a kernel
-# update the DKMS module exists for the new kernel and not the booted one, so ask
-# the module tree directly before concluding it is absent - otherwise this
-# silently stops installing the drop-in on exactly the reboot where you are
-# already suspicious of the sensors.
-have_nct6687() {
-  modinfo nct6687 >/dev/null 2>&1 && return 0
-  [ -n "$(find /lib/modules -name 'nct6687.ko*' -print -quit 2>/dev/null)" ]
+# NB: gated on PROFILE **and** on the module actually existing.
+# MSI B450 boards (like B450M Mortar MAX) use Nuvoton NCT6797D handled by the
+# in-tree nct6775 driver. MSI B550 boards use NCT6687D handled by nct6687 (DKMS).
+_board_name=$(cat /sys/devices/virtual/dmi/id/board_name 2>/dev/null || true)
+if [[ "$_board_name" =~ [bB]450 ]]; then
+  BOARD_SENSOR_MOD=nct6775
+else
+  BOARD_SENSOR_MOD=nct6687
+fi
+
+have_board_sensors() {
+  modinfo "$BOARD_SENSOR_MOD" >/dev/null 2>&1 && return 0
+  [ -n "$(find /lib/modules -name "${BOARD_SENSOR_MOD}.ko*" -print -quit 2>/dev/null)" ]
 }
 if [ "$PROFILE" = desktop ]; then
-  if have_nct6687; then
-    info "Board sensors (Nuvoton, MSI B450/B550)"
-    install_file modules-load.d/99-nct6687.conf \
-                 /etc/modules-load.d/99-nct6687.conf
+  if have_board_sensors; then
+    info "Board sensors (Nuvoton $BOARD_SENSOR_MOD for ${_board_name:-desktop})"
+    if [ "$BOARD_SENSOR_MOD" = nct6775 ] && [ -f /etc/modules-load.d/99-nct6687.conf ]; then
+      rm -f /etc/modules-load.d/99-nct6687.conf 2>/dev/null || true
+    fi
+    install_file modules-load.d/99-"$BOARD_SENSOR_MOD".conf \
+                 /etc/modules-load.d/99-"$BOARD_SENSOR_MOD".conf
   else
-    info "skipping nct6687 drop-in - module not installed (cpu=$CPU_VENDOR).
+    info "skipping $BOARD_SENSOR_MOD drop-in - module not installed (cpu=$CPU_VENDOR).
        A modules-load.d entry for a module that does not exist fails
        systemd-modules-load.service at every boot."
   fi
@@ -164,9 +157,9 @@ systemctl restart systemd-journald && ok "journald restarted"
 # NB: guarded on the drop-in existing rather than on $PROFILE, so it stays true
 # to what was actually installed above - including the case where the module was
 # not built and the drop-in was deliberately skipped.
-if [ -f /etc/modules-load.d/99-nct6687.conf ] && ! lsmod | grep -q '^nct6687'; then
-  modprobe nct6687 2>/dev/null && ok "nct6687 loaded" ||
-    warn "modprobe nct6687 failed - check 'dkms status' (it may not be built for $(uname -r))"
+if [ -n "${BOARD_SENSOR_MOD:-}" ] && [ -f "/etc/modules-load.d/99-$BOARD_SENSOR_MOD.conf" ] && ! lsmod | grep -q "^$BOARD_SENSOR_MOD"; then
+  modprobe "$BOARD_SENSOR_MOD" 2>/dev/null && ok "$BOARD_SENSOR_MOD loaded" ||
+    warn "modprobe $BOARD_SENSOR_MOD failed - check 'dkms status' (it may not be built for $(uname -r))"
 fi
 
 # NB: only when a modprobe.d file actually changed. mkinitcpio -P is ~30s and
@@ -177,8 +170,14 @@ if [ "$INITRAMFS_STALE" -eq 1 ]; then
   # the file is IN the initramfs. amdgpu loads there (the kms hook), and
   # mkinitcpio's modconf hook copies /etc/modprobe.d/*.conf in - so the option
   # is inert until this runs.
-  mkinitcpio -P >/dev/null 2>&1 && ok "initramfs regenerated" ||
-    warn "mkinitcpio -P failed - amdgpu will not pick up ppfeaturemask"
+  # On CachyOS with Limine, limine-mkinitcpio updates the bootloader's kernel/initramfs.
+  if command -v limine-mkinitcpio >/dev/null 2>&1; then
+    limine-mkinitcpio >/dev/null 2>&1 && ok "initramfs regenerated (limine)" ||
+      warn "limine-mkinitcpio failed - amdgpu will not pick up ppfeaturemask"
+  else
+    mkinitcpio -P >/dev/null 2>&1 && ok "initramfs regenerated" ||
+      warn "mkinitcpio -P failed - amdgpu will not pick up ppfeaturemask"
+  fi
 fi
 
 info "Enabling units Arch ships disabled"

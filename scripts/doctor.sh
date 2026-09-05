@@ -614,7 +614,11 @@ if [ "$GPU" = amd ]; then
   if [ "$_ppf_now" != 0xffffffff ]; then
     if [ -f /etc/modprobe.d/99-amdgpu-ppfeaturemask.conf ]; then
       note "  why" "drop-in installed but not live - REBOOT (amdgpu loads from the initramfs)"
-      note "  if still wrong after that" "sudo mkinitcpio -P; check HOOKS in /etc/mkinitcpio.conf has 'modconf'"
+      if command -v limine-mkinitcpio >/dev/null 2>&1; then
+        note "  if still wrong after that" "sudo limine-mkinitcpio (or add amdgpu.ppfeaturemask=0xffffffff to /etc/default/limine)"
+      else
+        note "  if still wrong after that" "sudo mkinitcpio -P; check HOOKS in /etc/mkinitcpio.conf has 'modconf'"
+      fi
     else
       note "  why" "/etc/modprobe.d/99-amdgpu-ppfeaturemask.conf absent - run 'sudo ./system/apply.sh'"
     fi
@@ -638,18 +642,24 @@ if [ "$GPU" = amd ]; then
 fi
 
 # NB: gated on the driver being INSTALLED at all, mirroring the same guard in
-# system/apply.sh. nct6687 is a motherboard fact riding the CPU axis (see
-# packages/cpu-amd.tsv): on the MSI board this repo targets it is always there,
-# so a failure below is real - but on any other desktop it never would be, and a
-# permanent red line for a Nuvoton chip the board does not have is noise, not a
-# finding.
-if ! { modinfo nct6687 >/dev/null 2>&1 ||
-       [ -n "$(find /lib/modules -name 'nct6687.ko*' -print -quit 2>/dev/null)" ]; }; then
-  note "nct6687" "<driver not installed - no board-sensor support on this machine>"
+# system/apply.sh. MSI B450 boards (like B450M Mortar MAX) use Nuvoton NCT6797D
+# handled by the in-tree `nct6775` driver; MSI B550 boards use NCT6687D handled
+# by the out-of-tree `nct6687` driver.
+_board_name=$(cat /sys/devices/virtual/dmi/id/board_name 2>/dev/null || true)
+if [[ "$_board_name" =~ [bB]450 ]] || lsmod 2>/dev/null | grep '^nct6775' >/dev/null; then
+  _sens_mod=nct6775
+  _sens_re='^nct(6775|679[0-9])-'
 else
-  # NB: loaded is NOT the same as bound. nct6687 inserts happily on a board
-  # without the chip and then reports nothing at all, so read SENSORS back rather
-  # than lsmod. A fan RPM is the only honest proof the driver found hardware.
+  _sens_mod=nct6687
+  _sens_re='^nct6687-'
+fi
+
+if ! { modinfo "$_sens_mod" >/dev/null 2>&1 ||
+       [ -n "$(find /lib/modules -name "${_sens_mod}.ko*" -print -quit 2>/dev/null)" ]; }; then
+  note "$_sens_mod" "<driver not installed - no board-sensor support on this machine>"
+else
+  # NB: loaded is NOT the same as bound. The driver inserts and then reports
+  # sensors if hardware was found. A fan RPM is the only honest proof.
   #
   # NB: `chk` on BOTH outcomes, never `ok` on the success path. `ok` prints a
   # green line but increments nothing, so this check used to enter the
@@ -657,33 +667,33 @@ else
   # report was 1 smaller on a healthy desktop than on a broken one. A
   # denominator that moves with the result is precisely the quiet dishonesty
   # this whole script exists to catch.
-  _nct_loaded=$(lsmod 2>/dev/null | grep -q '^nct6687' && echo yes || echo no)
-  chk "nct6687 module loaded" yes "$_nct_loaded"
+  _nct_loaded=$(lsmod 2>/dev/null | grep "^$_sens_mod" >/dev/null && echo yes || echo no)
+  chk "$_sens_mod module loaded" yes "$_nct_loaded"
   # NB: same reasoning as the ppfeaturemask note above - "never installed" and
   # "installed, not rebooted into yet" look identical from lsmod and need
   # different actions. This one is only an insertion, though, so unlike the mask
   # it does not need a reboot at all; system/apply.sh now modprobes it directly.
   if [ "$_nct_loaded" = no ]; then
-    if [ -f /etc/modules-load.d/99-nct6687.conf ]; then
-      note "  why" "drop-in installed, not loaded - 'sudo modprobe nct6687' (or 'dkms status' if that fails)"
+    if [ -f "/etc/modules-load.d/99-$_sens_mod.conf" ] || [ -f /etc/modules-load.d/99-nct6687.conf ]; then
+      note "  why" "drop-in installed, not loaded - 'sudo modprobe $_sens_mod' (or 'dkms status' if that fails)"
     else
-      note "  why" "/etc/modules-load.d/99-nct6687.conf absent - run 'sudo ./system/apply.sh'"
+      note "  why" "/etc/modules-load.d/99-$_sens_mod.conf absent - run 'sudo ./system/apply.sh'"
     fi
   fi
-  # NB: scoped to the nct6687 BLOCK of `sensors`, not to the whole output. It
+  # NB: scoped to the board-sensor BLOCK of `sensors`, not to the whole output. It
   # used to be a bare grep over everything, and amdgpu publishes its own hwmon
   # with a fan1 - so on the desktop this printed a green "board reports fan RPM"
-  # off the GPU fan, one line under a red "nct6687 module loaded: no". A count
+  # off the GPU fan, one line under a red module loaded: no. A count
   # that the board driver's absence cannot change is not evidence about the
   # board driver; it is the same silent substitution this script exists to
   # catch, committed by the script itself.
-  _fans=$(sensors 2>/dev/null | awk '
-      /^nct6687-/            { inblk = 1; next }
+  _fans=$(sensors 2>/dev/null | awk -v pat="$_sens_re" '
+      $0 ~ pat               { inblk = 1; next }
       /^[[:space:]]*$/       { inblk = 0 }
       inblk && /^fan[0-9]+:/ { n++ }
       END { print n + 0 }')
   chk "board reports fan RPM" yes "$([ "${_fans:-0}" -gt 0 ] && echo yes || echo no)"
-  note "  fans seen (nct6687 only)" "${_fans:-0}"
+  note "  fans seen ($_sens_mod only)" "${_fans:-0}"
 fi
 # Tctl is the AMD die sensor (k10temp). Fall back to whatever the first
 # reported package/core temperature is, so this is never a blank line.
@@ -752,9 +762,11 @@ if [ "$GPU" = amd ]; then
   # The 32-bit driver itself, read out of the LINKER CACHE rather than off the
   # filesystem: the loader dlopen()s the bare soname from the manifest above, so
   # ld.so's answer is the one that decides whether a 32-bit title gets RADV.
+  # NB: do NOT use `grep -q` in this pipeline. Under `set -o pipefail`, grep -q exits
+  # on the first match and sends SIGPIPE (141) to ldconfig, which fails the pipeline.
   chk "32-bit RADV library" present \
       "$(ldconfig -p 2>/dev/null |
-         grep -q 'libvulkan_radeon\.so (libc6) => /usr/lib32/' &&
+         grep 'libvulkan_radeon\.so (libc6) => /usr/lib32/' >/dev/null &&
          echo present || echo MISSING)"
 fi
 

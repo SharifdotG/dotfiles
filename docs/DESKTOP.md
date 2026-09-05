@@ -331,10 +331,11 @@ names: last writer wins, the fan curve silently reverts, nothing errors.
 
 ### Board sensors
 
-The B450M Mortar MAX's Nuvoton chip needs the out-of-tree `nct6687` driver;
-the in-tree `nct6683` binds it but reports almost nothing.
-`packages/cpu-amd.tsv` installs `nct6687d-dkms-git` and
-`system/modules-load.d/99-nct6687.conf` loads it.
+MSI B450 boards (such as B450M Mortar MAX) use a Nuvoton NCT6797D Super-I/O
+chip supported by the kernel's in-tree `nct6775` driver. MSI B550 boards use an
+NCT6687D chip, which requires the out-of-tree `nct6687` driver (`nct6687d-dkms-git`).
+`system/apply.sh` detects the board and installs the corresponding drop-in
+in `/etc/modules-load.d/` (`99-nct6775.conf` or `99-nct6687.conf`).
 
 ```bash
 sensors | grep -iE 'fan|tctl'
@@ -342,7 +343,7 @@ sensors | grep -iE 'fan|tctl'
 
 Loaded is not the same as bound — a module can insert on a board without the chip
 and report nothing at all. `doctor.sh` checks for an actual fan RPM, which is the
-only honest proof, and it counts fan lines **inside the `nct6687-` block** of
+only honest proof, and it counts fan lines **inside the board-sensor block** of
 `sensors` rather than across the whole output. That scoping is not fussiness:
 amdgpu publishes its own hwmon with a `fan1`, so the unscoped version went green
 off the *GPU* fan on a machine where the board driver was never loaded.
@@ -352,10 +353,10 @@ drop-in. `/etc/modules-load.d` is read once, by `systemd-modules-load.service` a
 boot, and nothing re-reads it — so before that, a correctly configured machine
 still showed no board sensors until its next reboot.
 
-**DKMS caveat:** the driver rebuilds on every kernel update, and when that build
-fails the module is simply absent on the next boot, with no error anywhere you
-would look. If fans vanish from `sensors` after an update, run `dkms status`
-first.
+**DKMS caveat (for B550 / nct6687):** the out-of-tree driver rebuilds on every kernel update,
+and when that build fails the module is simply absent on the next boot, with no error
+anywhere you would look. If fans vanish from `sensors` after an update, run `dkms status`
+first. B450 boards using in-tree `nct6775` are unaffected.
 
 ---
 
