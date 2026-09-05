@@ -4,6 +4,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 . lib/log.sh
 . lib/detect.sh
+. lib/pkg.sh
 detect_all
 
 pass=0; fail=0
@@ -54,7 +55,8 @@ _uarch=$(/lib64/ld-linux-x86-64.so.2 --help 2>/dev/null |
 # NB: derived, not hardcoded. It was a literal 11, which was right until the
 # desktop added two more sections and the last one printed "[13/11]" - the same
 # small wrongness bootstrap.sh already avoids by counting rather than guessing.
-UI_STEPS=13
+# 14 since the unwanted-packages section landed.
+UI_STEPS=14
 [ "$PROFILE" = desktop ] && UI_STEPS=$(( UI_STEPS + 2 ))
 banner "doctor" "read-only health check · reports, never changes anything"
 info "System: $DISTRO / $DESKTOP / $SESSION_TYPE  (vm: $IS_VM, pkg column: $PKG_COL, ${_uarch:-?})"
@@ -187,6 +189,22 @@ note "/etc .pacnew files" "$(echo "$_pacnew" | grep -c .)"
 if [ -n "$_pacnew" ]; then
   echo "$_pacnew" | while read -r f; do note "  $(basename "$f" .pacnew)" "${f%.pacnew}"; done
   note "  merge with" "sudo pacdiff   (pacman-contrib)"
+fi
+
+step "Unwanted packages"
+# packages/unwanted.tsv is only half a contract if nothing ever checks the other
+# side of it. bootstrap.sh removes these; this is what catches them coming BACK -
+# pulled in as a dependency of something new, or reinstalled by hand during some
+# debugging session and then forgotten. Neither leaves a trace anywhere else.
+_unwanted=$(for u in $(pkg_resolve arch packages/unwanted.tsv); do
+    pacman -Qq "$u" >/dev/null 2>&1 && printf '%s ' "$u"
+  done)
+if [ -z "$_unwanted" ]; then
+  chk "unwanted packages absent"  yes yes
+else
+  # Names, not a count. The fix is `./bootstrap.sh`, and knowing WHICH package
+  # came back is what tells you whether that is even the right answer.
+  chk "unwanted packages absent"  yes "installed: ${_unwanted% }"
 fi
 
 step "Shell + CLI config"

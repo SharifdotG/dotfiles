@@ -116,6 +116,8 @@ binary that plainly exists. Everything is normalised to LF.
 | `home/.chezmoitemplates/` | Content chezmoi cannot apply as a *path* — currently one systemd drop-in whose real filename contains a `\`, which Windows cannot check out. See above. |
 | `lib/` | `log.sh`, `detect.sh`, `pkg.sh` — sourced by everything else. Plain awk + TSV, no dependencies. |
 | `packages/*.tsv` | Logical package id → real name per source (`arch`, `aur`). Plain TSV, parsed with awk. |
+| `packages/unwanted.tsv` | The inverse list: packages bootstrap **removes**. Dropping a row from the manifests above only stops a reinstall; this is what takes something off a machine that already has it. |
+| `home/.chezmoiremove` | The same idea for `$HOME` — config left behind by a package that is gone, deleted on every apply. |
 | `os/cachyos/prep.sh` | Repo tier, pacman settings and the AUR helper — everything that must be right *before* packages install. |
 | `system/` | The `/etc` drop-ins that keep the machine from freezing. Applied by an explicit `sudo`. |
 | `scripts/` | `reclaim.sh`, `secrets-setup.sh`, `git-credentials.sh`, `doctor.sh`, and the backup pair `db-backup.sh` / `db-restore.sh` plus `agents-backup.sh`. |

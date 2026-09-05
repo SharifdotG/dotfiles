@@ -1,0 +1,27 @@
+# Paths chezmoi must DELETE from this machine on every apply.
+#
+# The counterpart to packages/unwanted.tsv: that file takes the program off the
+# disk, this one takes the config it left behind out of $HOME. Uninstalling a
+# package never touches ~/.config - pacman only owns files under its own
+# manifest - so without this the dotfiles of a removed app outlive it forever.
+#
+# DESTRUCTIVE, and unconditional: every `chezmoi apply` removes these again.
+# Preview before trusting a new line here:
+#     chezmoi apply --dry-run --verbose
+# To get one back, delete its line FIRST - otherwise the next apply eats it.
+
+# ── alacritty ────────────────────────────────────────────────────────────────
+# Not written by this repo and not left by pacman either: cachyos-alacritty-config
+# ships /etc/skel/.config/alacritty/alacritty.toml, and /etc/skel is copied into
+# the home directory once, at user creation. That is why removing the alacritty
+# PACKAGE is not enough and why deleting this by hand is not enough either - a
+# rebuilt machine gets a fresh copy from skel before this repo ever runs.
+# That skel package stays installed on purpose (cachyos-kde-settings depends on
+# it); this line is what makes its 2 KiB of template harmless.
+.config/alacritty
+
+# NB: yazi's leftover state (~/.local/state/yazi) is deliberately NOT listed.
+# .chezmoiignore already claims all of .local/state, and the two directives
+# meeting on one path is an interaction worth not depending on. It also does not
+# need the help: that directory is runtime state written BY yazi, so with the
+# binary uninstalled nothing can recreate it. It was removed once, by hand.

@@ -239,6 +239,50 @@ if [ "$NO_PKGS" -eq 0 ]; then
       *) warn "no package for '$u' - install it manually" ;;
     esac
   done
+
+  # ── packages this machine must NOT have ────────────────────────────────────
+  # Everything above this point is additive. Deleting a row from core.tsv stops
+  # bootstrap REINSTALLING that package; it does not take it off a disk that
+  # already has it, and pacman has no notion of "the manifest is the whole
+  # truth" that would do it for us. packages/unwanted.tsv is the other
+  # direction - the only reason `git pull && ./bootstrap.sh` can ever leave this
+  # machine with LESS on it than it started with.
+  #
+  # Deliberately NOT stamped, unlike every other step here. The whole thing is
+  # one `pacman -Qq` per row against a list a handful long; on a clean machine
+  # it finds nothing and does nothing, so it is already a no-op on re-run. A
+  # stamp would buy no time and would teach it to ignore a package that came
+  # back - which is the one case it exists to catch.
+  mapfile -t UNWANTED < <(pkg_resolve arch packages/unwanted.tsv)
+  PURGE=()
+  for u in "${UNWANTED[@]}"; do
+    pacman -Qq "$u" >/dev/null 2>&1 && PURGE+=("$u")
+  done
+  if [ "${#PURGE[@]}" -eq 0 ]; then
+    ok "no unwanted packages installed"
+  else
+    info "${#PURGE[@]} unwanted package(s): ${PURGE[*]}"
+    # NB: -Rns, and each flag is load-bearing.
+    #   -s  also drops dependencies nothing else needs any more - the reclaim
+    #   -n  deletes the package's own /etc files instead of leaving .pacsave
+    # NB: no --cascade, ever. WITHOUT it pacman refuses to remove a package
+    # something else depends on; WITH it, pacman removes the dependent too - so
+    # on this machine one careless manifest row could take the Plasma edition
+    # out. That refusal is the safety net, which is why the row for alacritty
+    # in unwanted.tsv leaves cachyos-alacritty-config alone.
+    #
+    # NB: `pacman -R` is atomic exactly like `pacman -S`, so one package pinned
+    # by a dependency aborts the transaction and NOTHING is removed. Same trap
+    # the MISSING check above exists for, same answer: fall back to one at a
+    # time so a single blocked row cannot hold the rest hostage.
+    if ! run sudo pacman -Rns --noconfirm "${PURGE[@]}"; then
+      warn "batch removal failed - retrying one at a time"
+      for u in "${PURGE[@]}"; do
+        run sudo pacman -Rns --noconfirm "$u" ||
+          warn "could not remove '$u' - something still depends on it"
+      done
+    fi
+  fi
 fi
 
 # ── 3. chezmoi ───────────────────────────────────────────────────────────────

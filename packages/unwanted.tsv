@@ -1,0 +1,23 @@
+# Packages this machine must NOT have. bootstrap.sh removes any of these that
+# are installed; scripts/doctor.sh verifies they stayed gone.
+#
+# WHY THIS FILE EXISTS: every other manifest is purely additive. Deleting a row
+# from core.tsv stops bootstrap REINSTALLING that package - it never takes it
+# off a disk that already has it, and pacman has no notion of "the manifest is
+# the whole truth" that would do it for us. Without this file everything ever
+# installed stays installed forever, and a freshly rebuilt machine ends up
+# cleaner than the one it was rebuilt from. That is backwards.
+#
+# RULES FOR ADDING A ROW
+#   - Name a real package. bootstrap matches the arch column with `pacman -Qq`,
+#     which knows package names and not provides - see the 7zip row in core.tsv
+#     for what that distinction has already cost once.
+#   - Do not list something another package depends on. Removal is `pacman -Rns`
+#     with no --cascade, so pacman refuses rather than dragging the dependent out
+#     with it; the row is safe, but it will fail and warn on every single run.
+#   - If you are also dropping the package from core/desktop/dev.tsv, do both in
+#     the same commit. A package present in two manifests would be installed and
+#     then removed by one bootstrap run.
+#id	arch	aur	nix	notes
+alacritty	alacritty	skip	skip	arrives with the CachyOS KDE edition, not from this repo. ghostty (desktop.tsv) is the terminal here and Konsole ships as the fallback, so this was a third terminal nothing ever launched. NB: cachyos-alacritty-config is deliberately NOT listed - it is a dependency of cachyos-kde-settings and removing it would take the edition's settings package with it. It ships nothing but /etc/skel/.config/alacritty/alacritty.toml, so with the binary gone it is 2 KiB of dead template rather than a program
+yazi	yazi	skip	yazi	was a core.tsv row as "the Dolphin replacement that fits this workflow". It did not replace anything - Dolphin (desktop.tsv) stayed the file manager in daily use, leaving two installed and one used
