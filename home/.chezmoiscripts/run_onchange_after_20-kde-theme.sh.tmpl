@@ -43,6 +43,27 @@
 # by .profile - and an entry for an input that changes no output would say the
 # opposite. Put it back in the same commit if a per-profile value ever returns.
 #
+# NB: `wallpaper=` hashes the IMAGE BYTES, and it is the only entry here that
+# does. Every other entry answers "does this thing exist yet"; a `stat` on the
+# wallpaper would answer that too and would be useless, because the file has
+# existed since the first apply. The input that actually changes is its CONTENT.
+# Swapping the picture keeps the path - the path is baked into WALLPAPER below
+# and into appletsrc - so with a stat-style guard the rendered script would be
+# byte-identical, the hash would match, and chezmoi would skip this script: the
+# new image would land in ~/.local/share and never be applied. Observed on
+# 2026-09-06 when the wallpaper was replaced in place.
+#
+# `include` is read relative to the SOURCE directory (this repo's `home/`, per
+# .chezmoiroot), not the target, so the hash is of the file this repo ships -
+# which is what "did the wallpaper change in git" means. Binary content through
+# `include` is fine; sha256sum consumes it and only the hex digest is rendered.
+#
+# NB: re-running this script re-runs `plasma-apply-wallpaperimage` with an
+# UNCHANGED path. That sets the same value in appletsrc, so Plasma may see no
+# change and keep drawing the cached image until plasmashell restarts. If the
+# desktop still shows the old picture after an apply:
+#     systemctl --user restart plasma-plasmashell
+#
 # state: icons={{ if stat "/usr/share/icons/breeze/index.theme" }}y{{ else }}n{{ end }}
 #        launcher={{ if stat (joinPath .chezmoi.homeDir ".local/share/icons/hicolor/512x512/apps/catppuccin-latte.png") }}y{{ else }}n{{ end }}
 #        lnf={{ if stat (joinPath .chezmoi.homeDir ".local/share/plasma/look-and-feel/Catppuccin-Latte-Blue/metadata.json") }}y{{ else }}n{{ end }}
@@ -50,6 +71,7 @@
 #        cursor={{ if stat (joinPath .chezmoi.homeDir ".local/share/icons/WhiteSur-cursors/index.theme") }}y{{ else if stat "/usr/share/icons/WhiteSur-cursors/index.theme" }}y{{ else }}n{{ end }}
 #        kwrite={{ if lookPath "kwriteconfig6" }}y{{ else }}n{{ end }}
 #        session={{ output "sh" "-c" "pgrep -x plasmashell >/dev/null 2>&1 && echo live || echo headless" }}
+#        wallpaper={{ sha256sum (include "private_dot_local/share/wallpapers/Catppuccin-Latte/contents/images/3840x2160.png") }}
 
 set -uo pipefail
 

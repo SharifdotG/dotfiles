@@ -1534,7 +1534,21 @@ All of this is applied by `home/.chezmoiscripts/run_onchange_after_20-kde-theme.
 | Cursors | WhiteSur | `.chezmoiexternal.toml` → archive external |
 | UI font | Adwaita Sans 10 | `packages/desktop.tsv` → `adwaita-fonts` |
 | Mono font | CaskaydiaCove Nerd Font 10 | already there for Ghostty |
-| Wallpaper | Catppuccin Latte | committed, `~/.local/share/wallpapers/Catppuccin-Latte` |
+| Wallpaper | Catppuccin Latte (**v2** since 2026-09-06) | committed, `~/.local/share/wallpapers/Catppuccin-Latte` |
+
+> **Replacing the wallpaper is not just `cp`.** The image keeps its filename — the path
+> `…/contents/images/3840x2160.png` is baked into both the theme script and `appletsrc` — so the
+> only thing that changes is the file's *content*. The theme script is `run_onchange_`, and every
+> other entry in its `state:` line answers "does this exist yet", which the wallpaper always did.
+> The rendered script would have been byte-identical, chezmoi would have skipped it, and the new
+> picture would have landed in `~/.local/share` and never been applied. The state line therefore
+> carries `wallpaper={{ sha256sum (include "…/3840x2160.png") }}` — the only entry that hashes
+> content rather than existence. Swap the image, `chezmoi apply`, and the theme script re-runs by
+> itself.
+>
+> If the desktop still shows the old picture afterwards, Plasma is caching it — the path did not
+> change, so `plasma-apply-wallpaperimage` wrote the same value and Plasma saw no change:
+> `systemctl --user restart plasma-plasmashell`.
 
 Four decisions in there are load-bearing:
 
