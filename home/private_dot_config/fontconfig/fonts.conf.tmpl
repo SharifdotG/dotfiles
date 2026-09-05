@@ -35,7 +35,17 @@
 
   <!-- Adwaita ships no serif face. Everything except monospace is Adwaita Sans
        per the request, so serif resolves there too rather than falling through
-       to whatever Noto the fontconfig defaults would pick. -->
+       to whatever Noto the fontconfig defaults would pick.
+
+       NB, 2026-09-06: this rule DOES NOT REACH CHROMIUM, and the browser was
+       rendering `font-family: serif` as Liberation Serif while this file said
+       otherwise. Blink does not ask fontconfig for the generic families at all
+       - it maps CSS serif/sans-serif/monospace to its OWN prefs
+       (webkit.webprefs.fonts.{serif,sansserif,fixed}.Zyyy) and only then asks
+       fontconfig for that concrete family name. So a browser needs the same
+       decision written a second time, in its own profile. That is what
+       .chezmoiscripts/run_after_50-brave-fonts.sh does; keep the two in step
+       the same way this file and kdeglobals are kept in step. -->
   <match target="pattern">
     <test qual="any" name="family"><string>serif</string></test>
     <edit name="family" mode="prepend" binding="strong"><string>Adwaita Sans</string></edit>
@@ -113,6 +123,68 @@
        Do not "fix" these aliases; there is nothing wrong with them. -->
   <alias><family>system-ui</family><prefer><family>Adwaita Sans</family></prefer></alias>
   <alias><family>ui-monospace</family><prefer><family>CaskaydiaCove Nerd Font</family></prefer></alias>
+
+  <!-- The rest of the CSS/web font keywords. ADDED 2026-09-06, and the reason
+       they are not optional is that `fc-match` CANNOT SEE THE BUG THEY FIX.
+
+       Before this block, fc-match answered Adwaita Sans for every name below -
+       so by the only test this file had, nothing was wrong:
+
+           $ fc-match 'ui\-sans\-serif'    ->  AdwaitaSans-Regular.ttf
+           $ fc-match '\-apple\-system'    ->  AdwaitaSans-Regular.ttf
+             (the second needs an end-of-options marker before the pattern,
+              per the note above; it cannot be written literally here because
+              a double dash is not legal inside an XML comment - which is
+              itself how this file got broken once, see the NB at the end)
+
+       But that answer is fontconfig SUBSTITUTING for a family it does not
+       know, not fontconfig MATCHING one. fc-match reports the substitution and
+       looks correct; Chromium asks the same question through
+       FontConfigDirect::MatchFamilyName, which REJECTS a result whose family
+       is not a real match for the request, and falls back to the browser's own
+       "Standard font" pref instead. Measured in Brave (headless, real profile,
+       CSS.getPlatformFontsForNode reporting the face actually used to draw):
+
+           font-family: -apple-system              ->  Liberation Serif
+           font-family: BlinkMacSystemFont         ->  Liberation Serif
+           font-family: ui-sans-serif              ->  Liberation Serif
+           -apple-system, BlinkMacSystemFont,
+             'Segoe UI', Roboto                    ->  Liberation Serif
+
+       A SERIF face, on the stack half the web ships. system-ui and
+       ui-monospace above were already fine precisely because they have an
+       explicit <alias> - that is what makes the match strong enough for
+       Chromium to accept. The names below just need the same treatment. After:
+
+           all four  ->  Adwaita Sans
+
+       NB: THE TEST FOR THIS IS THE BROWSER, NOT fc-match. If these ever look
+       broken again, probe the browser; fc-match will keep saying it is fine.
+
+       NB: NEVER WRITE A DOUBLE DASH IN A COMMENT IN THIS FILE. XML forbids it
+       inside a comment body, and fontconfig's reaction is the worst possible
+       one: it prints
+           Fontconfig error: ".../fonts.conf", line NNN: not well-formed
+       to stderr - where a desktop session sends it nowhere - and then IGNORES
+       THE ENTIRE FILE. Not the bad comment, the whole config. Every binding
+       above silently stops existing and the machine falls back to the
+       fontconfig defaults, so sans-serif becomes Noto Sans and the desktop
+       quietly changes font. Introduced and caught on 2026-09-06 by writing
+       `fc-match` with its end-of-options marker in the block above.
+       The check is one command, and it is worth running after ANY edit here:
+       `xmllint` with its noout flag, against the RENDERED file in ~/.config.
+       scripts/doctor.sh runs exactly that, for exactly this reason.
+
+       NB: Arial and Helvetica are deliberately NOT here. They resolve to
+       Liberation Sans via /etc/fonts/conf.d/30-metric-aliases.conf, which is
+       correct and wanted: a page asking for Arial by name is asking for those
+       metrics, and Liberation Sans is the metric-compatible face. Only the
+       "give me the system font" keywords belong in this block. -->
+  <alias><family>ui-sans-serif</family><prefer><family>Adwaita Sans</family></prefer></alias>
+  <alias><family>ui-serif</family><prefer><family>Adwaita Sans</family></prefer></alias>
+  <alias><family>ui-rounded</family><prefer><family>Adwaita Sans</family></prefer></alias>
+  <alias><family>-apple-system</family><prefer><family>Adwaita Sans</family></prefer></alias>
+  <alias><family>BlinkMacSystemFont</family><prefer><family>Adwaita Sans</family></prefer></alias>
 
   <!-- ── 2. Rasterisation, per panel ────────────────────────────────────────
 

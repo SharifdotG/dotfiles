@@ -330,6 +330,35 @@ note "zsh startup" "$(echo "$_zsh_start" | tail -1)s"
 note "  load avg / CPU MHz" "$(cut -d' ' -f1-3 /proc/loadavg) / $(awk '/cpu MHz/{s+=$4;n++} END{printf "%.0f", s/n}' /proc/cpuinfo)"
 
 step "Fonts"
+# FIRST, IS THE CONFIG FILE EVEN BEING READ. This check is deliberately ahead of
+# every resolution check below, because when it fails all of them are measuring
+# a machine that has no user fontconfig at all, and they do not say so.
+#
+# fonts.conf is XML, and XML forbids a double dash inside a comment body. That
+# file is ~200 lines of prose explaining itself, so the odds of writing one are
+# not small - it happened on 2026-09-06, writing out an `fc-match` invocation
+# with its end-of-options marker. What fontconfig does about it:
+#
+#     Fontconfig error: ".../fonts.conf", line 134: not well-formed (invalid token)
+#
+# on stderr, which in a desktop session goes nowhere, AND THEN IT DISCARDS THE
+# WHOLE FILE. Not the malformed comment - the entire user config. Every generic
+# binding vanishes at once, sans-serif silently becomes Noto Sans, and the
+# checks below all report the fontconfig defaults as though they were settings.
+#
+# NB: this validates the RENDERED file in ~/.config, not the .tmpl in the repo,
+# because the template is not XML until chezmoi has run.
+_fcfile="${XDG_CONFIG_HOME:-$HOME/.config}/fontconfig/fonts.conf"
+if command -v xmllint >/dev/null 2>&1; then
+  chk "fonts.conf well-formed"   yes \
+      "$(xmllint --noout "$_fcfile" 2>/dev/null && echo yes || echo no)"
+  note "  if that is no" "a double dash in an XML comment voids the ENTIRE file; xmllint names the line"
+else
+  # Not fatal, but say so rather than silently skipping - a check that is not
+  # running looks identical to a check that is passing.
+  note "  fonts.conf well-formed" "skipped: xmllint not installed (libxml2)"
+fi
+
 # THIS SECTION EXISTS BECAUSE THE FONT WAS WRONG FOR WEEKS AND NOTHING SAID SO.
 # Ghostty, VS Code, fontconfig and the KDE theme script all asked for "Cascadia
 # Code NF". The installed package (ttf-cascadia-code-nerd) registers the family
@@ -404,6 +433,44 @@ for _f in "Mona Sans:Mona" "Monaspace Neon:Monaspace"; do
   chk "${_f%%:*} resolves"       yes "$(case "$(fc-match -f '%{file}' "${_f%%:*}" 2>/dev/null)" in
       *"${_f##*:}"*) echo yes;; *) echo no;; esac)"
 done
+
+# ── the browser, which fontconfig does not reach ─────────────────────────────
+# EVERY CHECK ABOVE USES fc-match, AND fc-match CANNOT SEE THIS. Blink does not
+# ask fontconfig for the CSS generics at all: it maps serif/sans-serif/monospace
+# to its own prefs and only then asks fontconfig for that concrete family. So
+# `standard` and `serif` sitting unset - which is how this machine was found on
+# 2026-09-06 - means Chromium falls back to its compiled-in "Times New Roman",
+# fontconfig metric-substitutes Liberation Serif, and an unstyled page renders
+# in a SERIF face while fc-match cheerfully reports Adwaita Sans for everything.
+#
+# The value is written by .chezmoiscripts/run_after_50-brave-fonts.sh and is
+# checked here because Brave's own settings UI can change it back at any time,
+# and nothing else would notice.
+_bravepref=""
+for _r in "${XDG_CONFIG_HOME:-$HOME/.config}/BraveSoftware/Brave-Origin" \
+          "${XDG_CONFIG_HOME:-$HOME/.config}/BraveSoftware/Brave-Browser"; do
+  [ -f "$_r/Default/Preferences" ] && { _bravepref="$_r/Default/Preferences"; break; }
+done
+if [ -n "$_bravepref" ] && command -v python3 >/dev/null 2>&1; then
+  # Prints the four families, or the literal "unset" for any that is missing -
+  # which is the state that matters and the one a value comparison would hide.
+  _bravefonts=$(python3 - "$_bravepref" <<'PY' 2>/dev/null
+import json, sys
+try:
+    f = json.load(open(sys.argv[1], encoding="utf-8"))["webkit"]["webprefs"]["fonts"]
+except Exception:
+    f = {}
+ui, mono = "Adwaita Sans", "CaskaydiaCove Nerd Font"
+want = {"standard": ui, "serif": ui, "sansserif": ui, "fixed": mono}
+print("ok" if all(f.get(k, {}).get("Zyyy") == v for k, v in want.items())
+      else ",".join(k for k, v in want.items() if f.get(k, {}).get("Zyyy") != v) + " wrong/unset")
+PY
+)
+  chk "brave web fonts"          ok "${_bravefonts:-<unreadable>}"
+  note "  if that is not ok" "quit Brave, then 'chezmoi apply' (it will not write under a running browser)"
+else
+  note "  brave web fonts" "skipped: no Brave profile yet (launch it once)"
+fi
 
 step "Desktop theme"
 # NB: everything here reads the LIVE key, never the script that wrote it. The

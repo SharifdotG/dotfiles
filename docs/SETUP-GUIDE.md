@@ -1697,6 +1697,96 @@ for **this panel specifically**: 14" 1920×1080 ≈ 157 ppi.
 > Plasma does **not** read `fonts.conf` to choose its own UI font — that lives in `kdeglobals`
 > and is set by the theming script. The two have to agree, so change both or neither.
 
+#### ⚠️ The browser is a third place, and `fc-match` cannot see it — 2026-09-06
+
+Investigated after the desktop was reported as rendering a wrong "system fallback" font in the
+browser. **The suspicion was Cantarell. It was not Cantarell** — nothing on this machine
+resolves to Cantarell, and it is only installed because `cantarell-fonts` was pulled in
+explicitly. The font actually being rendered was **Liberation Serif**, and there were two
+independent causes.
+
+Measured in Brave itself rather than with `fc-match`, because `fc-match` reports all of this as
+correct. The tool is headless Brave over the DevTools protocol, asking
+`CSS.getPlatformFontsForNode` which face was *actually used to draw the glyphs*:
+
+| CSS | Before | After |
+|---|---|---|
+| *(no `font-family` at all)* | **Liberation Serif** | Adwaita Sans |
+| `serif` | **Liberation Serif** | Adwaita Sans |
+| `-apple-system` | **Liberation Serif** | Adwaita Sans |
+| `BlinkMacSystemFont` | **Liberation Serif** | Adwaita Sans |
+| `ui-sans-serif` | **Liberation Serif** | Adwaita Sans |
+| `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto` | **Liberation Serif** | Adwaita Sans |
+| `system-ui`, `sans-serif`, `monospace`, `ui-monospace` | already correct | unchanged |
+
+**Cause 1 — fontconfig substitutes, but Chromium refuses the substitution.** This is the
+`CaskaydiaCove` lesson from Phase 6 with a sting in the tail. Ask `fc-match` for a family it
+does not know and it hands back Adwaita Sans, so the check passes:
+
+```console
+$ fc-match 'ui\-sans\-serif'
+AdwaitaSans-Regular.ttf: "Adwaita Sans" "Regular"
+```
+
+But that is fontconfig *substituting*, not *matching*. Blink asks the same question through
+`FontConfigDirect::MatchFamilyName`, which **rejects** a result whose family is not a real match
+for the request and falls back to the browser's own Standard font instead. `system-ui` and
+`ui-monospace` were fine only because `fonts.conf` gives them an explicit `<alias>` — that is
+what makes a match strong enough for Chromium to accept. The fix is to give the rest of the
+web's system-font keywords the same treatment: `ui-sans-serif`, `ui-serif`, `ui-rounded`,
+`-apple-system`, `BlinkMacSystemFont`.
+
+> **`fc-match` is not a valid test for this, and that is the point.** It answered "Adwaita Sans"
+> for every one of those names both before and after the fix. The only honest test is the
+> browser.
+
+**Cause 2 — Chromium never asks fontconfig for the CSS generics at all.** It maps
+`serif`/`sans-serif`/`monospace` to its **own** preferences and only then asks fontconfig for
+that concrete family:
+
+```
+webkit.webprefs.fonts.standard.Zyyy     <- pages that set no font at all
+webkit.webprefs.fonts.serif.Zyyy        <- CSS serif
+webkit.webprefs.fonts.sansserif.Zyyy    <- CSS sans-serif
+webkit.webprefs.fonts.fixed.Zyyy        <- CSS monospace
+```
+
+Two of those four were set on this machine, by hand through Brave's settings UI and therefore on
+no other machine; `standard` and `serif` were not. An **unset** Chromium font pref does not fall
+through to fontconfig — it uses Chromium's compiled-in default, which for both is
+`Times New Roman`, which fontconfig then metric-substitutes to Liberation Serif. So an unstyled
+page rendered in a serif face on a desktop that is Adwaita Sans everywhere else, and
+`fonts.conf`'s `serif → Adwaita Sans` rule never had anything to do with it.
+
+`home/.chezmoiscripts/run_after_50-brave-fonts.sh` writes all four. Two things about it are
+deliberate:
+
+- **It is `run_after_`, not `run_onchange_` like every other script in that directory.** Brave
+  rewrites `Preferences` from memory while it runs, so a write landing mid-session is discarded
+  at exit and the only safe move is to skip and retry later. `run_onchange_` records its hash on
+  *any* zero exit, so "skipped because Brave was running" would be pinned in permanently — the
+  trap `40-default-apps` documents. `run_after_` runs every apply, which is what "retry until it
+  sticks" needs.
+- **It merges four keys, never rewrites the file.** `Preferences` is a ~200 KB document owned by
+  the browser holding session state, extensions and per-site settings. Same rule as
+  `mimeapps.list`: do not manage a file another program owns, edit the keys you need.
+
+**So: quit Brave before `chezmoi apply`, or it will tell you it skipped.** `doctor.sh` checks the
+four values and says the same thing if they drift back.
+
+> **Arial and Helvetica still resolve to Liberation Sans, and that is correct.** They go through
+> `/etc/fonts/conf.d/30-metric-aliases.conf`. A page naming Arial is asking for Arial's *metrics*,
+> and Liberation Sans is the metric-compatible face. Only the "give me the system font" keywords
+> belong in the alias block.
+
+> **Never write a double dash in a comment in `fonts.conf`.** XML forbids it, and fontconfig's
+> response is to print `not well-formed` to stderr — which a desktop session throws away — and
+> then **discard the entire file**. Every binding vanishes at once and `sans-serif` silently
+> becomes Noto Sans. This was introduced and caught while writing the fix above, by spelling out
+> an `fc-match` invocation with its end-of-options marker. `doctor.sh` now runs `xmllint` against
+> the rendered file as the *first* check in its Fonts section, because when it fails every other
+> font check is measuring a machine with no user fontconfig at all.
+
 ### 🖼 GTK apps: KDE already themes them — don't "fix" this
 
 `kde-gtk-config`'s kded module regenerates `~/.config/gtk-{3,4}.0/` and `~/.gtkrc-2.0` from
